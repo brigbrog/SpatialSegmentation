@@ -14,6 +14,8 @@ from tqdm import tqdm
 import gc
 from joblib import Parallel, delayed
 
+#change 1
+
 
 #do print('.', end=' ', flush=True) for print statements, also add more print statements - DONE
 #bit depth
