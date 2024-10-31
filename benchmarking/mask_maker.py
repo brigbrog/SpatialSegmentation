@@ -78,12 +78,12 @@ class MaskMaker:
         return opened_img
     
 
-    def compare(self, var_seg_full_df):
+    #def compare(self, var_seg_full_df):
         ### DIFFERENT CLASS
         # make segmenters
         # perform roc for each segmenter's out_masks against origin csv
         # plot metrics for each
-        pass
+        #pass
 
 class ControlSegmenter(MaskMaker):
     def __init__(self,
@@ -93,11 +93,11 @@ class ControlSegmenter(MaskMaker):
                  area_filter_jobn: int = 4,
                  origin_csv_fname=None,
                  channel_id=1,
-                 segmentation_method='watershed',
+                 #segmentation_method='watershed',
                  preproc_defaults = [0, (11,11), (5,5)]
                  ):
         super().__init__(image_fname, origin_csv_fname, channel_id)
-        assert controls is None or len(controls) == 3, \
+        assert controls is None or len(controls) == len(var_ranges), \
             "Controls must be None or a list of the same length (and order) as var_ranges.keys"
         assert var_ranges is not None and len(var_ranges) > 0, \
             "Test parameters and ranges must be specified for analysis."
@@ -106,7 +106,7 @@ class ControlSegmenter(MaskMaker):
         self.var_ranges_values = list(self.var_ranges.values())
         self.controls = controls
         self.area_filter_jobn = area_filter_jobn
-        self.segmentation_method = segmentation_method
+        #self.segmentation_method = segmentation_method
         self.preproc_defaults = preproc_defaults
         self.var_seg_fulldf = self.variable_segmentation_fulldf()
 
@@ -148,11 +148,15 @@ class ControlSegmenter(MaskMaker):
             print(f'Engine running... testing setting {element}', flush=True)
             new_params = params.copy()
             new_params[test_id] = element
-            if self.segmentation_method == 'SuzukiAbe':
-                markers, contour_arr = self.suzukiAbe(new_params)
-            if self.segmentation_method == 'watershed':
-                self.preproc = self.preprocess()
-                markers, contour_arr = self.watershed(new_params)
+
+
+            #if self.segmentation_method == 'SuzukiAbe':
+            #    markers, contour_arr = self.suzukiAbe(new_params)
+
+
+            #if self.segmentation_method == 'watershed':
+            self.preproc = self.preprocess()
+            markers, contour_arr = self.watershed(new_params)
             results = {'test_paramID': self.var_ranges_keys[test_id] + str(i)}
             results['num_cells'] = len(contour_arr)
             results.update({name: new_params[j] for j, name in enumerate(self.var_ranges_keys)})
@@ -163,8 +167,9 @@ class ControlSegmenter(MaskMaker):
 
     def watershed(self, param_list):
         dtp, dks, mca = param_list
+        #dks = 3
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (int(dks), int(dks)))
-        report = "Watershed Engine: {}"
+        #report = "Watershed Engine: {}"
         steps = [
             ("dilating", lambda: cv2.dilate(self.preproc, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dks, dks)), iterations=1)),
             ("distance transform", lambda: cv2.distanceTransform(self.preproc, cv2.DIST_L2, 5)),
@@ -177,7 +182,7 @@ class ControlSegmenter(MaskMaker):
             #print(report.format(step), flush=True)
             result = operation()
             if step == 'dilating':
-                sure_bg = cv2.dilate(self.preproc, kernel, iterations=1)
+                sure_bg = cv2.dilate(self.preproc, kernel, iterations=3)
             if step == "distance transform":
                 dist = result
                 _, sure_fg = cv2.threshold(dist, 0.3 * dist.max(), 255, cv2.THRESH_BINARY)
@@ -217,15 +222,15 @@ class ControlSegmenter(MaskMaker):
 
         return all_contours
 
-    def suzukiAbe(self, param_list):
-        # performs single openCV contour find thing, returns mask and contour array
-        filtered_contours = None
-        preproc_img = self.preprocess(param_list[0], param_list[1], param_list[2])
-        contours, _ = cv2.findContours(preproc_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        if contours: # and cv2.contourArea(contours[0]) > mca:  # Check if contours are found
-            filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > mca]
-            #cont_arr.append(contours[0])
-        return np.nan, filtered_contours
+    #def suzukiAbe(self, param_list):
+    #    # performs single openCV contour find thing, returns mask and contour array
+    #    filtered_contours = None
+    #    preproc_img = self.preprocess(param_list[0], param_list[1], param_list[2])
+    #    contours, _ = cv2.findContours(preproc_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    #    if contours: # and cv2.contourArea(contours[0]) > mca:  # Check if contours are found
+    #        filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > mca]
+    #        #cont_arr.append(contours[0])
+    #    return np.nan, filtered_contours
 
 
 if __name__ == "__main__": 
@@ -234,7 +239,7 @@ if __name__ == "__main__":
     origin_csv_fname = None
     full_tiff = '/Users/brianbrogan/Desktop/KI24/ClusterImgGen2024/STERSEQ/output/02. Images/02.1. Raw prediction/1996-081_GFM_SS200000954BR_A2_tissue_cleaned_cortex_crop/clusters/cluster0_from_1996-081_GFM_SS200000954BR_A2_bin100_tissue_cleaned_mean_r10_cap1000.tif'
     png_slice = '/Users/brianbrogan/Desktop/KI24/figures/color_slice.png'
-    segmentation_method = 'watershed' #'SuzukiAbe', 'watershed' 
+    #segmentation_method = 'watershed' #'SuzukiAbe', 'watershed' 
 
     image_fname = png_slice
 
@@ -258,22 +263,27 @@ if __name__ == "__main__":
         'minimum_cell_area': np.arange(mca[0], mca[1]+1, mca_step)
     }
 
-    suzukiAbe_var_ranges = {} # threshline(percentage?), gauss blur k size, opening k size
+    #suzukiAbe_var_ranges = {} # threshline(percentage?), gauss blur k size, opening k size
 
     print("Origin Data File: ", origin_csv_fname)
     print("Selected Image File: ", image_fname)
     print("Number of params to be analyzed: ", len(watershed_var_ranges))
-    print("Segmentation method: ", segmentation_method)
+    #print("Segmentation method: ", segmentation_method)
 
 
     
     #tiff.imwrite('figures/MaskMaker_test1.tiff', masker.preproc, photometric='minisblack')
     test_segmenter = ControlSegmenter(image_fname= image_fname,
                                       var_ranges= watershed_var_ranges,
-                                      controls= [90, 3, 100],
+                                      controls= [
+                                                 90,
+                                                 3,
+                                                 100
+                                                 ],
                                       area_filter_jobn=4,
                                       origin_csv_fname=None,
                                       channel_id=1,
-                                      segmentation_method='watershed')
+                                      #segmentation_method='watershed'
+                                      )
     print(test_segmenter.var_seg_fulldf.info())
     print(test_segmenter.var_seg_fulldf)
