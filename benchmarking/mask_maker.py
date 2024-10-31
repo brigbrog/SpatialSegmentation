@@ -43,12 +43,10 @@ from joblib import Parallel, delayed
 class MaskMaker:
     def __init__(self, 
                  image_fname,
-                 origin_csv_fname=None,
                  channel_id=1):
         self.image_fname = image_fname
-        self.origin_csv_fname = origin_csv_fname
         self.channel_id = channel_id
-        self.preproc = None #self.preprocess()
+        self.preproc = None
 
     def preprocess(self,
                    threshline=0,
@@ -76,14 +74,6 @@ class MaskMaker:
                                       cv2.getStructuringElement(cv2.MORPH_ELLIPSE, opening_ksize), 
                                       iterations=1)
         return opened_img
-    
-
-    #def compare(self, var_seg_full_df):
-        ### DIFFERENT CLASS
-        # make segmenters
-        # perform roc for each segmenter's out_masks against origin csv
-        # plot metrics for each
-        #pass
 
 class ControlSegmenter(MaskMaker):
     def __init__(self,
@@ -91,12 +81,11 @@ class ControlSegmenter(MaskMaker):
                  var_ranges: dict,
                  controls: list | None, # controls must be of length 3 -> [dtp, dks, mca] (even if not all are to be tested), or None
                  area_filter_jobn: int = 4,
-                 origin_csv_fname=None,
                  channel_id=1,
-                 #segmentation_method='watershed',
-                 preproc_defaults = [0, (11,11), (5,5)]
+                 preproc_defaults = [0, (11,11), (5,5)] 
                  ):
-        super().__init__(image_fname, origin_csv_fname, channel_id)
+        super().__init__(image_fname,
+                         channel_id)
         assert controls is None or len(controls) == len(var_ranges), \
             "Controls must be None or a list of the same length (and order) as var_ranges.keys"
         assert var_ranges is not None and len(var_ranges) > 0, \
@@ -135,11 +124,12 @@ class ControlSegmenter(MaskMaker):
         out_masks = pd.DataFrame(columns = ['test_paramID', 'num_cells'] + self.var_ranges_keys + ['markers', 'contour array'])
         test_id = None
         for i, param in enumerate(params):
-            #if not isinstance(param, np.array):
-            if isinstance(param, (list, np.ndarray, tuple)):
-            #if len(param) > 1:
+            control_type_check = isinstance(param, (list, np.ndarray, tuple))
+            if control_type_check:
                 test_id = i
                 break
+            #elif not control_type_check:
+                #raise ValueError("Controls must be of type list, np.ndarray, or tuple")
         if test_id is None:
             raise ValueError("Controls param must contain 1 list for iterative analysis.")
         for i, element in enumerate(params[test_id]):
@@ -148,14 +138,9 @@ class ControlSegmenter(MaskMaker):
             print(f'Engine running... testing setting {element}', flush=True)
             new_params = params.copy()
             new_params[test_id] = element
-
-
-            #if self.segmentation_method == 'SuzukiAbe':
-            #    markers, contour_arr = self.suzukiAbe(new_params)
-
-
-            #if self.segmentation_method == 'watershed':
-            self.preproc = self.preprocess()
+            ## SEGMENT
+            #self.preproc = self.preprocess() -> moved inside watershed method
+            self.preproc = None
             markers, contour_arr = self.watershed(new_params)
             results = {'test_paramID': self.var_ranges_keys[test_id] + str(i)}
             results['num_cells'] = len(contour_arr)
@@ -166,10 +151,10 @@ class ControlSegmenter(MaskMaker):
         return out_masks
 
     def watershed(self, param_list):
-        dtp, dks, mca = param_list
+        dtp,dks,mca = param_list
         #dks = 3
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (int(dks), int(dks)))
-        #report = "Watershed Engine: {}"
+        self.preproc = self.preprocess(opening_ksize=(int(dks), int(dks)))
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)) #(int(dks), int(dks))) dks switched to preprocess
         steps = [
             ("dilating", lambda: cv2.dilate(self.preproc, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dks, dks)), iterations=1)),
             ("distance transform", lambda: cv2.distanceTransform(self.preproc, cv2.DIST_L2, 5)),
@@ -179,7 +164,6 @@ class ControlSegmenter(MaskMaker):
             ("watershed", lambda: cv2.watershed(cv2.cvtColor(self.preproc, cv2.COLOR_GRAY2BGR), np.int32(markers))),
         ]
         for step, operation in steps:
-            #print(report.format(step), flush=True)
             result = operation()
             if step == 'dilating':
                 sure_bg = cv2.dilate(self.preproc, kernel, iterations=3)
@@ -216,21 +200,10 @@ class ControlSegmenter(MaskMaker):
                 contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
                 filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) >= mca]
                 all_contours.extend(filtered_contours)
-
                 pbar.set_postfix_str(f"{i}/{len(unique_labels)}")
                 pbar.update(1)
 
         return all_contours
-
-    #def suzukiAbe(self, param_list):
-    #    # performs single openCV contour find thing, returns mask and contour array
-    #    filtered_contours = None
-    #    preproc_img = self.preprocess(param_list[0], param_list[1], param_list[2])
-    #    contours, _ = cv2.findContours(preproc_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    #    if contours: # and cv2.contourArea(contours[0]) > mca:  # Check if contours are found
-    #        filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > mca]
-    #        #cont_arr.append(contours[0])
-    #    return np.nan, filtered_contours
 
 
 if __name__ == "__main__": 
@@ -249,7 +222,7 @@ if __name__ == "__main__":
     dtp_step = 1
 
     # Watershed Dilation Kernel Size
-    dks = [2, 7]
+    dks = [2, 10]
     dks_step = 1
 
     # Minimum Cell Area Count (pixels)
@@ -275,15 +248,13 @@ if __name__ == "__main__":
     #tiff.imwrite('figures/MaskMaker_test1.tiff', masker.preproc, photometric='minisblack')
     test_segmenter = ControlSegmenter(image_fname= image_fname,
                                       var_ranges= watershed_var_ranges,
-                                      controls= [
+                                      controls= (
                                                  90,
-                                                 3,
+                                                 5,
                                                  100
-                                                 ],
+                                      ),
                                       area_filter_jobn=4,
-                                      origin_csv_fname=None,
-                                      channel_id=1,
-                                      #segmentation_method='watershed'
+                                      channel_id=1
                                       )
     print(test_segmenter.var_seg_fulldf.info())
     print(test_segmenter.var_seg_fulldf)
