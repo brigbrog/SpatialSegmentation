@@ -1,0 +1,11 @@
+#output from mask_maker.py script -> includes metadata.parquet, markers.json, and contours.json
+
+mask_maker_output/
+
+#json files
+
+*.json
+
+#parquets
+
+*.parquet
