@@ -7,55 +7,56 @@ from tqdm import tqdm
 import os
 import json
 
-#import gc
-#import seaborn as sb
-#from multiprocessing import Pool, cpu_count
-#import sys
-#import progressbar
-#import requests 
-#import time
-#from joblib import Parallel, delayed
-
-
-#do print('.', end=' ', flush=True) for print statements, also add more print statements - DONE
-#bit depth
-#maybe move preprocess to ControlSegmenter - NO
-
-# Watershed method is SUPER SLOW -> change for tiled computation - NO DONE
-
-#Ensure that find_all_contours actually finds all contours - DONE
-#Check that image data unchanged (depth)
-#Implement reporting:
-#   progressbar - DONE
-#   one for each param being tested  - DONE
-#   also create updating statememt for process being executed - DONE
-#Debug other params - DONE
-#Inpsect dataframe creation - DONE
-# Still want to try to run multiprocess... self.area_filter_jobn
-#Organize Dir for comparison blueprint - DONE
-    # OMIT Suzuki Abe option - DONE
-    # Dilation Kernel size doesnt do anything so figure that out - DONE
-    # Find suitable DF export type - DONE
-    # Blueprint outside class for comparison
-# Clean up everything (reports, imports, exe code)
-# Documentation!! (docstrings, github)
-
-
+"""
+- do print('.', end=' ', flush=True) for print statements, also add more print statements - DONE
+- bit depth
+- maybe move preprocess to ControlSegmenter - NO
+- Watershed method is SUPER SLOW -> change for tiled computation - NO DONE
+- Ensure that find_all_contours actually finds all contours - DONE
+- Check that image data unchanged (depth)
+- Implement reporting:
+    - progressbar - DONE
+    - one for each param being tested - DONE
+    - also create updating statement for process being executed - DONE
+- Debug other params - DONE
+- Inspect dataframe creation - DONE
+- Still want to try to run multiprocess... self.area_filter_jobn
+- Organize Dir for comparison blueprint - DONE
+    - OMIT Suzuki Abe option - DONE
+    - Dilation Kernel size doesn't do anything so figure that out - DONE
+    - Find suitable DF export type - DONE
+    - Blueprint outside class for comparison
+- Clean up everything (reports, imports, exe code)
+- Documentation!! (docstrings, github)
+"""
 
 class MaskMaker:
+    '''Wrapper class for ControlSegmenter.'''
     def __init__(self, 
-                 image_fname,
-                 channel_id=1):
+                 image_fname: str = None,
+                 channel_id: int = 1):
+        '''Constructor for MaskMaker.
+        Params:
+            image_fname: (str) The directory form which the analysis image is pulled.
+            channel_id: (int) The channel of the image to be analyzed.'''
+        
         self.image_fname = image_fname
         self.channel_id = channel_id
-        self.preproc = None
+        self.preproc = None ### PUT PREPROC IMAGE BACK HERE ###
 
     def preprocess(self,
-                   threshline=0,
                    gauss_ksize=(11,11), 
+                   threshline=0,
                    opening_ksize=(5,5)):
-
-        # Import image file
+        '''Helper method for ControlSegmenter.watershed. Performs preprocessing steps for more accurate segmentation.
+        Imports, slices, thresholds, blurs, and opens the image specified at the image_fname attr.
+        Params:
+            gauss_ksize: (tuple) default = (11,11) The kernel size for the Gaussian blurring.
+            threshline: (int) default = 0 The threshold of binarization of the image after Gaussian blurring.
+            opening_ksize: (tuple) default = (5,5) The kernel size for the opening (erosion then dilation) applied to the image.
+        Returns:
+            opened_img: The single-channel preprocessed image array.'''
+        
         assert self.image_fname is not None, "Image filepath must be specified to run analysis."
         img = cv2.imread(self.image_fname, cv2.IMREAD_UNCHANGED)
         if img is None:
@@ -65,12 +66,10 @@ class MaskMaker:
         else:
             raise IndexError("Channel ID is out of bounds for the image dimensions.")
         #print("Collected Image from ", self.image_fname, " with shape ", img.shape, flush=True)
-        # Blur and Threshold
         assert threshline < np.max(img), "Threshold above bounds of image intensity range."
         blur = cv2.GaussianBlur(img,
                                 gauss_ksize, 0)
-        _, bin_img = cv2.threshold(blur, threshline, np.max(img), cv2.THRESH_BINARY) # Change to be DYNAMIC - will be changed for segmentation_method = suzukiAbe
-        # Open
+        _, bin_img = cv2.threshold(blur, threshline, np.max(img), cv2.THRESH_BINARY)
         opened_img = cv2.morphologyEx(bin_img, 
                                       cv2.MORPH_OPEN, 
                                       cv2.getStructuringElement(cv2.MORPH_ELLIPSE, opening_ksize), 
@@ -78,16 +77,31 @@ class MaskMaker:
         return opened_img
 
 class ControlSegmenter(MaskMaker):
+    '''Subclass of MaskMaker. Performs controlled-variable watershed segmentation experiment on image 
+    preprocessed by MaskMaker superclass.'''
     def __init__(self,
-                 image_fname,
+                 image_fname, # IS THIS NEEDED ???
                  var_ranges: dict,
                  controls: list | None, # controls must be of length 3 -> [dtp, dks, mca] (even if not all are to be tested), or None
-                 area_filter_jobn: int = 4,
-                 channel_id=1,
-                 preproc_defaults = [0, (11,11), (5,5)] 
+                 #area_filter_jobn: int = 4,
+                 channel_id: int = 1, # IS THIS NEEDED ???,
+                 preproc_defaults: list = [0, (11,11), (5,5)] 
                  ):
-        super().__init__(image_fname,
-                         channel_id)
+        '''Constructor for ControlSegmenter class. Calls MaskMaker constructor. Reads variable 
+        ranges and automatically runs segmentation experiment.
+        Params:
+            image_fname: TRY TO GET RIDDA DIS
+            var_ranges: (dict) Organizing dictionary of variables to be tested in segmentation. 
+                        Options include distance transform percentile, dilation kernel size, or 
+                        minimum cell area. Any choice of these three variables is supported.
+            controls: (list) The control list for the segmentation experiment. Controls must be 
+                      of length 3 or None in the order of var_ranges even if not all variables are specified for 
+                      testing. If controls is None, all 3 var_ranges must be specified and
+                      the median of each var_range will be imputed.
+            channel_id: ALSO TRY TO GET RID OF THIS
+            preproc_defaults: (list) Default settings for MaskMaker.preprocess(). Used in ... maybe also move this up'''
+        
+        super().__init__(image_fname, channel_id)
         assert controls is None or len(controls) == len(var_ranges), \
             "Controls must be None or a list of the same length (and order) as var_ranges.keys"
         assert var_ranges is not None and len(var_ranges) > 0, \
@@ -96,17 +110,24 @@ class ControlSegmenter(MaskMaker):
         self.var_ranges_keys = list(self.var_ranges.keys())
         self.var_ranges_values = list(self.var_ranges.values())
         self.controls = controls
-        self.area_filter_jobn = area_filter_jobn
+        #self.area_filter_jobn = area_filter_jobn
         self.preproc_defaults = preproc_defaults
         self.var_seg_fulldf = self.variable_segmentation_fulldf()
 
     def variable_segmentation_fulldf(self):
+        '''Method for populating the variable segmentation Dataframe. Implements the variable engine for each range of variables. 
+        Combines controls with var_ranges iteratively. Called in ControlSegmenter initializer. 
+        Params:
+            None
+        Returns:
+            var_seg_fulldf: (pd.DataFrame) contains test_paramID, num_cells, dt_percentile, dilation_kernel_size, 
+            minimum_cell_area, markers (arr), contour_array (arr).'''
+        
         if self.controls is None:
             if len(self.var_ranges) != 3:
                 raise ValueError("If full control list is not specified, var_ranges for all 3 params must be provided.")
             print("Imputing var_range medians for segmentation controls because none were specified.", flush=True)
             self.controls = [np.median(range).astype(np.uint8) for range in self.var_ranges_values]
-
         var_seg_fulldf = None
         for i in range(len(self.var_ranges_values)):
             print(f'Variable Engine: creating segmentations for {self.var_ranges_keys[i]} : {len(self.var_ranges_values[i])} settings', flush=True)
@@ -122,7 +143,15 @@ class ControlSegmenter(MaskMaker):
         return var_seg_fulldf
 
     def variable_engine(self, params):
-        out_masks = pd.DataFrame(columns = ['test_paramID', 'num_cells'] + self.var_ranges_keys + ['markers', 'contour array'])
+        '''The engine function for performing a round of variable watershed segmentation. Called in self.variable_segmentation_fulldf. 
+        Calls self.watershed iterative for one range specified list element in params.
+        Params:
+            params: (list) List of control parameters containing one list of variables for testing at the desired test index.
+        Returns:
+            round: (pd.DataFrame) A sub DataFrame containing results from a single round of variable watershed segmentation. 
+                   Intended to be concatenated to var_seg_fulldf iteratively in variable_segmentation_fulldf.'''
+        
+        round = pd.DataFrame(columns = ['test_paramID', 'num_cells'] + self.var_ranges_keys + ['markers', 'contour array'])
         test_id = None
         for i, param in enumerate(params):
             control_type_check = isinstance(param, (list, np.ndarray))
@@ -142,16 +171,22 @@ class ControlSegmenter(MaskMaker):
             results['num_cells'] = len(contour_arr)
             results.update({name: new_params[j] for j, name in enumerate(self.var_ranges_keys)})
             results['markers'] = markers.tolist() # keep as list for json
-            results['contour array'] = contour_arr
-            out_masks.loc[len(out_masks)] = results
-        return out_masks
+            results['contour_array'] = contour_arr
+            round.loc[len(round)] = results
+        return round
 
     def watershed(self, param_list):
+        '''Verbosely performs a single watershed segmentation based on super.preproc using parameters in param_list.
+        Params:
+            param_list: (list) Contains the three test parameters in the following order: dtp, dks, mca.
+        Returns: 
+            markers: (array) Marker array calculated by openCV.watershed. Mimics shape of super.preproc.
+            filtered_contours: (list) Sifted contour array calculated by self.findsift_contours.'''
+        
         dtp,dks,mca = param_list
-        #dks = 3
-        self.preproc = None
-        self.preproc = self.preprocess(opening_ksize=(int(dks), int(dks)))
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)) #(int(dks), int(dks))) dks switched to preprocess
+        self.preproc = None 
+        self.preproc = self.preprocess(opening_ksize=(int(dks), int(dks))) ### THIS SHOULD NOT BE HERE
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
         steps = [
             ("dilating", lambda: cv2.dilate(self.preproc, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dks, dks)), iterations=1)),
             ("distance transform", lambda: cv2.distanceTransform(self.preproc, cv2.DIST_L2, 5)),
@@ -182,13 +217,18 @@ class ControlSegmenter(MaskMaker):
                 markers = result
 
         print("Sifting contours...", flush=True)
-        filtered_contours = self.find_all_contours(markers, mca)
-        print("markers type: ", type(markers), type(markers[0]))
-        print("contour array type: ", type(filtered_contours), type(filtered_contours[0]), type(filtered_contours[0][0]))
+        filtered_contours = self.findsift_contours(markers, mca)
         print(f'{len(filtered_contours)} CELLS FOUND', flush=True)
         return markers, filtered_contours
 
-    def find_all_contours(self, markers, mca):
+    def findsift_contours(self, markers, mca):
+        '''Verbose contour finder for segmentation marker array. Creates binary mask for each marker and applies openCV.findContours().
+          Once calculated contours are sifted for minimum area (mca).
+        Params:
+            markers: (array) Array of segmentation markers. Binary masks are created for each unqiue nonzero (background) value of the 
+                     marker array
+            mca (int) The minimum required contour area for post-caluclation sifting.'''
+        
         all_contours = []
         unique_labels = np.unique(markers)
         unique_labels = unique_labels[unique_labels != 0]
@@ -204,6 +244,14 @@ class ControlSegmenter(MaskMaker):
         return all_contours
 
     def export(self, out_dir="mask_maker_output", parquet_name="variable_segmentation_metadata"):
+        '''Export function for data collected by ControlSegmenter. Not automatically called during instance construction. 
+        Ensures that DataFrame is correctly populated and exports parquet and json files. Parquet contains metadata from 
+        variable segmenentation (test_paramID, num_cells, segmentation settings), markers.json and contour_array.json contains 
+        the markers and contour arrays from each segmentation
+        Params:
+            out_dir (str) default = "mask_maker_output" The default name for output directory.
+            parquet_name (str) default = "variable_segmentation_metadata" The default filename for metadata parquet.'''
+        
         assert self.var_seg_fulldf is not None, \
         "Ensure that variable segmentation full Dataframe is initialized properly before attempting to report."
         os.makedirs(out_dir, exist_ok=True)
@@ -216,7 +264,7 @@ class ControlSegmenter(MaskMaker):
             json_data = None
             if col == "markers":
                 json_data = [arr for arr in segmentation[col]]
-            elif col == "contour array":
+            elif col == "contour_array":
                 json_data = segmentation[col].tolist()  
             assert json_data is not None, \
             "Ensure that markers and contours are properly created before attempting to report."
@@ -259,7 +307,7 @@ if __name__ == "__main__":
     print("Selected Image File: ", image_fname)
     print("Number of params to be analyzed: ", len(watershed_var_ranges))
 
-    
+
     #tiff.imwrite('figures/MaskMaker_test1.tiff', masker.preproc, photometric='minisblack')
     test_segmenter = ControlSegmenter(image_fname= image_fname,
                                       var_ranges= watershed_var_ranges,
@@ -268,7 +316,7 @@ if __name__ == "__main__":
                                                  5,
                                                  100
                                       ],
-                                      area_filter_jobn=4,
+                                      #area_filter_jobn=4,
                                       channel_id=1
                                       )
     test_segmenter.export()
