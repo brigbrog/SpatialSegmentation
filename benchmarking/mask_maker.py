@@ -2,17 +2,19 @@ import numpy as np
 import pandas as pd
 import cv2 
 from scipy.ndimage import gaussian_filter
-import seaborn as sb
 import tifffile as tiff
-from multiprocessing import Pool, cpu_count
-import sys
-import progressbar
-import requests 
-import time
 from tqdm import tqdm
+import os
+import json
 
-import gc
-from joblib import Parallel, delayed
+#import gc
+#import seaborn as sb
+#from multiprocessing import Pool, cpu_count
+#import sys
+#import progressbar
+#import requests 
+#import time
+#from joblib import Parallel, delayed
 
 
 #do print('.', end=' ', flush=True) for print statements, also add more print statements - DONE
@@ -30,10 +32,10 @@ from joblib import Parallel, delayed
 #Debug other params - DONE
 #Inpsect dataframe creation - DONE
 # Still want to try to run multiprocess... self.area_filter_jobn
-#Organize Dir for comparison blueprint
-    # OMIT Suzuki Abe option
-    # Dilation Kernel size doesnt do anything so figure that out
-    # Find suitable DF export type
+#Organize Dir for comparison blueprint - DONE
+    # OMIT Suzuki Abe option - DONE
+    # Dilation Kernel size doesnt do anything so figure that out - DONE
+    # Find suitable DF export type - DONE
     # Blueprint outside class for comparison
 # Clean up everything (reports, imports, exe code)
 # Documentation!! (docstrings, github)
@@ -95,7 +97,6 @@ class ControlSegmenter(MaskMaker):
         self.var_ranges_values = list(self.var_ranges.values())
         self.controls = controls
         self.area_filter_jobn = area_filter_jobn
-        #self.segmentation_method = segmentation_method
         self.preproc_defaults = preproc_defaults
         self.var_seg_fulldf = self.variable_segmentation_fulldf()
 
@@ -124,12 +125,10 @@ class ControlSegmenter(MaskMaker):
         out_masks = pd.DataFrame(columns = ['test_paramID', 'num_cells'] + self.var_ranges_keys + ['markers', 'contour array'])
         test_id = None
         for i, param in enumerate(params):
-            control_type_check = isinstance(param, (list, np.ndarray, tuple))
+            control_type_check = isinstance(param, (list, np.ndarray))
             if control_type_check:
                 test_id = i
                 break
-            #elif not control_type_check:
-                #raise ValueError("Controls must be of type list, np.ndarray, or tuple")
         if test_id is None:
             raise ValueError("Controls param must contain 1 list for iterative analysis.")
         for i, element in enumerate(params[test_id]):
@@ -138,14 +137,11 @@ class ControlSegmenter(MaskMaker):
             print(f'Engine running... testing setting {element}', flush=True)
             new_params = params.copy()
             new_params[test_id] = element
-            ## SEGMENT
-            #self.preproc = self.preprocess() -> moved inside watershed method
-            self.preproc = None
             markers, contour_arr = self.watershed(new_params)
             results = {'test_paramID': self.var_ranges_keys[test_id] + str(i)}
             results['num_cells'] = len(contour_arr)
             results.update({name: new_params[j] for j, name in enumerate(self.var_ranges_keys)})
-            results['markers'] = np.array(markers)
+            results['markers'] = markers.tolist() # keep as list for json
             results['contour array'] = contour_arr
             out_masks.loc[len(out_masks)] = results
         return out_masks
@@ -153,6 +149,7 @@ class ControlSegmenter(MaskMaker):
     def watershed(self, param_list):
         dtp,dks,mca = param_list
         #dks = 3
+        self.preproc = None
         self.preproc = self.preprocess(opening_ksize=(int(dks), int(dks)))
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)) #(int(dks), int(dks))) dks switched to preprocess
         steps = [
@@ -186,6 +183,8 @@ class ControlSegmenter(MaskMaker):
 
         print("Sifting contours...", flush=True)
         filtered_contours = self.find_all_contours(markers, mca)
+        print("markers type: ", type(markers), type(markers[0]))
+        print("contour array type: ", type(filtered_contours), type(filtered_contours[0]), type(filtered_contours[0][0]))
         print(f'{len(filtered_contours)} CELLS FOUND', flush=True)
         return markers, filtered_contours
 
@@ -198,12 +197,32 @@ class ControlSegmenter(MaskMaker):
             for i, label in enumerate(unique_labels, 1):
                 binary_mask = (markers == label).astype(np.uint8) * 255
                 contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-                filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) >= mca]
+                filtered_contours = [cnt.tolist() for cnt in contours if cv2.contourArea(cnt) >= mca]
                 all_contours.extend(filtered_contours)
                 pbar.set_postfix_str(f"{i}/{len(unique_labels)}")
                 pbar.update(1)
-
         return all_contours
+
+    def export(self, out_dir="mask_maker_output", parquet_name="variable_segmentation_metadata"):
+        assert self.var_seg_fulldf is not None, \
+        "Ensure that variable segmentation full Dataframe is initialized properly before attempting to report."
+        os.makedirs(out_dir, exist_ok=True)
+        parquet_path = os.path.join(out_dir, parquet_name + ".parquet")
+        print("Creating exports...", flush=True)
+        self.var_seg_fulldf.iloc[:, :-2].to_parquet(parquet_path, index=False)
+        segmentation = self.var_seg_fulldf.iloc[:, -2:]
+        for col in segmentation.columns: 
+            json_path = os.path.join(out_dir, f"{col}.json")
+            json_data = None
+            if col == "markers":
+                json_data = [arr for arr in segmentation[col]]
+            elif col == "contour array":
+                json_data = segmentation[col].tolist()  
+            assert json_data is not None, \
+            "Ensure that markers and contours are properly created before attempting to report."
+            with open(json_path, 'w') as f:
+                json.dump(json_data, f)
+        print("Done.", flush=True)
 
 
 if __name__ == "__main__": 
@@ -212,17 +231,17 @@ if __name__ == "__main__":
     origin_csv_fname = None
     full_tiff = '/Users/brianbrogan/Desktop/KI24/ClusterImgGen2024/STERSEQ/output/02. Images/02.1. Raw prediction/1996-081_GFM_SS200000954BR_A2_tissue_cleaned_cortex_crop/clusters/cluster0_from_1996-081_GFM_SS200000954BR_A2_bin100_tissue_cleaned_mean_r10_cap1000.tif'
     png_slice = '/Users/brianbrogan/Desktop/KI24/figures/color_slice.png'
-    #segmentation_method = 'watershed' #'SuzukiAbe', 'watershed' 
 
     image_fname = png_slice
 
     ## Variable Definition - start/stop - ensure range is divisible by step
+
     # Distance Transform Percentile for Watershed Marker Definition
     dtp = [80, 98]
     dtp_step = 1
 
     # Watershed Dilation Kernel Size
-    dks = [2, 10]
+    dks = [2, 7]
     dks_step = 1
 
     # Minimum Cell Area Count (pixels)
@@ -236,25 +255,22 @@ if __name__ == "__main__":
         'minimum_cell_area': np.arange(mca[0], mca[1]+1, mca_step)
     }
 
-    #suzukiAbe_var_ranges = {} # threshline(percentage?), gauss blur k size, opening k size
-
     print("Origin Data File: ", origin_csv_fname)
     print("Selected Image File: ", image_fname)
     print("Number of params to be analyzed: ", len(watershed_var_ranges))
-    #print("Segmentation method: ", segmentation_method)
-
 
     
     #tiff.imwrite('figures/MaskMaker_test1.tiff', masker.preproc, photometric='minisblack')
     test_segmenter = ControlSegmenter(image_fname= image_fname,
                                       var_ranges= watershed_var_ranges,
-                                      controls= (
+                                      controls= [
                                                  90,
                                                  5,
                                                  100
-                                      ),
+                                      ],
                                       area_filter_jobn=4,
                                       channel_id=1
                                       )
+    test_segmenter.export()
     print(test_segmenter.var_seg_fulldf.info())
-    print(test_segmenter.var_seg_fulldf)
+    print(test_segmenter.var_seg_fulldf.head())
