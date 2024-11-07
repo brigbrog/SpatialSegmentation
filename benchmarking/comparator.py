@@ -10,6 +10,7 @@ import progressbar
 import requests 
 import time
 import os
+import fastparquet
 from tqdm import tqdm
 
 import gc
@@ -21,24 +22,26 @@ from joblib import Parallel, delayed
 class Comparator:
     def __init__(self, 
                  origin_csv_fname: str = None,
-                 mask_maker_pqfname: str = None,
+                 pqfname: str = None,
                  pos_indicators: str = None,
                  neg_indicators: str = None,
                  rep_perc: float = 1.0
                  ):
         self.origin_csv_fname = origin_csv_fname
-        self.mask_maker_pq = mask_maker_pqfname
+        self.pqfname = pqfname
         self.pos_indicators = pos_indicators # convert from fname (strings in txt) to array of str (names)
         self.neg_indicators = neg_indicators # convert from fname (strings in txt) to array of str (names)
-        self.metadata = None # read parquet -> DataFrame
-        self.contours = None # read json -> DataFrame
-        self.markers = None # read json -> DataFrame
         self.rep_perc = rep_perc
-        self.testidx = self.set_testidx()
-        
+        # use tqdm to display importation tasks #
+        self.testidx = self.set_testidx() 
+        self.metadata = self.import_metadata() # read parquet -> DataFrame 
+        self.contours = self.import_contours() # read json -> DataFrame
+        self.markers = self.import_markers() # read json -> DataFrame
+    
 
     def import_metadata(self):
-        pass
+        metadata = pd.read_parquet(self.pqfname, engine='fastparquet')
+        return metadata
 
     def import_contours(self):
         pass 
@@ -55,7 +58,7 @@ class Comparator:
         pass
 
     def run_comparison(self, 
-                       set: pd.DataFrame = None
+                       mask_df: pd.DataFrame = None
                        ):
         pass
 
@@ -63,8 +66,18 @@ class Comparator:
         pass
 
     def export_compare_data(self, 
-                            df: pd.DataFrame = None,
+                            out_df: pd.DataFrame = None,
                             ):
         pass
 
 
+def test_import_metadata(pqfname):
+    metadata = pd.read_parquet(pqfname, engine='fastparquet')
+    return metadata
+
+
+if __name__ == '__main__':
+    metadata = test_import_metadata(
+        '/Users/brianbrogan/Desktop/KI24/SpatialSegmentation/mask_maker_output/variable_segmentation_metadata.parquet'
+    )
+    print(metadata.head(10))
