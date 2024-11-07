@@ -8,26 +8,10 @@ import os
 import json
 
 """
-- do print('.', end=' ', flush=True) for print statements, also add more print statements - DONE
-- bit depth
-- maybe move preprocess to ControlSegmenter - NO
-- Watershed method is SUPER SLOW -> change for tiled computation - NO DONE
-- Ensure that find_all_contours actually finds all contours - DONE
-- Check that image data unchanged (depth)
-- Implement reporting:
-    - progressbar - DONE
-    - one for each param being tested - DONE
-    - also create updating statement for process being executed - DONE
-- Debug other params - DONE
-- Inspect dataframe creation - DONE
-- Still want to try to run multiprocess... self.area_filter_jobn
-- Organize Dir for comparison blueprint - DONE
-    - OMIT Suzuki Abe option - DONE
-    - Dilation Kernel size doesn't do anything so figure that out - DONE
-    - Find suitable DF export type - DONE
-    - Blueprint outside class for comparison
-- Clean up everything (reports, imports, exe code)
-- Documentation!! (docstrings, github)
+Author: Brian Brogan
+Karolinska Intitutet
+Fall 2024
+This script is designed to create a controlled parameter experiment to determine results for various ranges of watershed segmentation.
 """
 
 class MaskMaker:
