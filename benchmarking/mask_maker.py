@@ -105,7 +105,7 @@ class ControlSegmenter(MaskMaker):
             None
         Returns:
             var_seg_fulldf: (pd.DataFrame) contains test_paramID, num_cells, dt_percentile, dilation_kernel_size, 
-            minimum_cell_area, markers (arr), contour_array (arr).'''
+            minimum_cell_area, markers (arr), contours (arr).'''
         
         if self.controls is None:
             if len(self.var_ranges) != 3:
@@ -135,7 +135,7 @@ class ControlSegmenter(MaskMaker):
             round: (pd.DataFrame) A sub DataFrame containing results from a single round of variable watershed segmentation. 
                    Intended to be concatenated to var_seg_fulldf iteratively in variable_segmentation_fulldf.'''
         
-        round = pd.DataFrame(columns = ['test_paramID', 'num_cells'] + self.var_ranges_keys + ['markers', 'contour array'])
+        round = pd.DataFrame(columns = ['test_paramID', 'num_cells'] + self.var_ranges_keys + ['markers', 'contours'])
         test_id = None
         for i, param in enumerate(params):
             control_type_check = isinstance(param, (list, np.ndarray))
@@ -155,7 +155,7 @@ class ControlSegmenter(MaskMaker):
             results['num_cells'] = len(contour_arr)
             results.update({name: new_params[j] for j, name in enumerate(self.var_ranges_keys)})
             results['markers'] = markers.tolist() # keep as list for json
-            results['contour_array'] = contour_arr
+            results['contours'] = contour_arr
             round.loc[len(round)] = results
         return round
 
@@ -230,7 +230,7 @@ class ControlSegmenter(MaskMaker):
     def export(self, out_dir="mask_maker_output", parquet_name="variable_segmentation_metadata"):
         '''Export function for data collected by ControlSegmenter. Not automatically called during instance construction. 
         Ensures that DataFrame is correctly populated and exports parquet and json files. Parquet contains metadata from 
-        variable segmenentation (test_paramID, num_cells, segmentation settings), markers.json and contour_array.json contains 
+        variable segmenentation (test_paramID, num_cells, segmentation settings), markers.json and contours.json contains 
         the markers and contour arrays from each segmentation
         Params:
             out_dir (str) default = "mask_maker_output" The default name for output directory.
@@ -248,7 +248,7 @@ class ControlSegmenter(MaskMaker):
             json_data = None
             if col == "markers":
                 json_data = [arr for arr in segmentation[col]]
-            elif col == "contour_array":
+            elif col == "contours":
                 json_data = segmentation[col].tolist()  
             assert json_data is not None, \
             "Ensure that markers and contours are properly created before attempting to report."
