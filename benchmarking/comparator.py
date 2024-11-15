@@ -21,7 +21,8 @@ from joblib import Parallel, delayed
 # need to find how to get indicator lists DONE
 # FIX MARKERS and CONTOURS importers, they are fucked up
     #contours DONE
-    #markers
+    #markers DONE
+# Make testidx and thinner before pos/neg masks
 # create pos/neg masks for quick comparison to origin
     # Only have cell specific true pos false neg, false pos and true neg are rates bc no cell assignment
     # create numpy mask for each contour and pull positive coords or find better way...
@@ -111,35 +112,34 @@ class Indicator:
 
 class Comparator:
     def __init__(self, 
-                 indicator: Indicator = None, 
-                 pqfname: str = None,
+                 indicator: Indicator = None,
                  rep_perc: float = 1.0
                  ):
         self.indicator = indicator
         self.origin_csv_fname = self.indicator.origin_csv_fname
-        #self.origin_df = self.import_origin()
         self.origin_df = self.indicator.origin_csv
-        self.pqfname = pqfname
         self.pos_indicators = self.indicator.pos_indicators 
         self.neg_indicators = self.indicator.neg_indicators
         self.rep_perc = rep_perc
         # use tqdm to display importation tasks #
-        self.testidx = self.set_testidx() 
-        self.metadata = self.import_metadata() # read parquet -> DataFrame
-        self.markers = self.import_markers() # read json -> DataFrame
-        self.contours = self.import_contours() # read json -> DataFrame
-    
-    '''def import_origin(self):
-        origin_df = pd.read_csv(self.origin_csv_fname)
-        return origin_df'''
         
-    def import_metadata(self):
-        metadata = pd.read_parquet(self.pqfname, engine='fastparquet')
+        self.metadata = self.import_metadata() # read parquet -> DataFrame DONE
+        self.markers = self.import_markers() # read json -> DataFrame DONE
+        self.contours = self.import_contours() # read json -> DataFrame DONE
+        self.testidx = self.set_testidx() 
+        self.thin()
+
+    def import_metadata(self, 
+                        in_dir: str = 'mask_maker_output'
+                        ):
+        pq_path = os.path.join(in_dir, 'variable_segmentation_metadata.parquet')
+        metadata = pd.read_parquet(pq_path, engine='fastparquet')
         return metadata
     
     def import_markers(self, 
                         in_dir: str = 'mask_maker_output'
                         ):
+        # add tqdm
         temp = []
         markers_path = os.path.join(in_dir, "markers.json")
         with open(markers_path, 'r') as f:
@@ -152,6 +152,7 @@ class Comparator:
     def import_contours(self, 
                         in_dir: str = 'mask_maker_output'
                         ):
+        # add tqdm
         temp = []
         contours_path = os.path.join(in_dir, "contours.json")
         with open(contours_path, 'r') as f:
@@ -162,7 +163,14 @@ class Comparator:
         return cont_df
 
     def set_testidx(self):
-        pass
+        test_length = np.ceil(len(self.metadata) * self.rep_perc)
+        ids = np.sort(np.random.choice(len(self.metadata), test_length, replace=False))
+        return ids
+    
+    def thin(self):
+        self.metadata = self.metadata.iloc[self.testidx]
+        self.contours = self.contours.iloc[self.testidx]
+        self.markers = self.markers.iloc[self.testidx]
 
     def create_pos_mask(self):
         pass
@@ -170,11 +178,6 @@ class Comparator:
     def create_neg_mask(self, 
                         n_indicators: int = 10
                         ):
-        pass
-
-    def thin(self, 
-             set: pd.DataFrame = None
-             ):
         pass
 
     def run_comparison(self, 
