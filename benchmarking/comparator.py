@@ -140,11 +140,14 @@ class Comparator:
     def import_markers(self, 
                         in_dir: str = 'mask_maker_output'
                         ):
+        temp = []
         markers_path = os.path.join(in_dir, "markers.json")
         with open(markers_path, 'r') as f:
             markers_data = json.load(f)
-        markers = pd.Series(markers_data, name="markers")
-        return markers
+        for iseg_mark_list in markers_data:
+            temp.append([np.array(mark, dtype=np.int32) for mark in iseg_mark_list if len(mark)>1])
+        mark_df = pd.DataFrame({'marker_arrs': temp}, dtype='object')
+        return mark_df
 
     def import_contours(self, 
                         in_dir: str = 'mask_maker_output'
@@ -243,10 +246,19 @@ def test_import_contours(in_dir: str = None):
     cont_df = pd.DataFrame({'contour_arrs': contours}, dtype='object')
     return cont_df
 
+def test_import_markers(in_dir: str = 'mask_maker_output'):
+    temp = []
+    markers_path = os.path.join(in_dir, "markers.json")
+    with open(markers_path, 'r') as f:
+        markers_data = json.load(f)
+    for iseg_mark_list in markers_data:
+        temp.append([np.array(mark, dtype=np.int32) for mark in iseg_mark_list if len(mark)>1])
+    mark_df = pd.DataFrame({'marker_arrs': temp}, dtype='object')
+    return mark_df
 
 
 if __name__ == '__main__':
-    contours = test_import_contours(
+    contours = test_import_markers(
         '/Users/brianbrogan/Desktop/KI24/SpatialSegmentation/mask_maker_output'
     )
     print(contours.head(10))
