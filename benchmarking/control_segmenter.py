@@ -10,8 +10,8 @@ import fastparquet
 
 #fix preprocess thing DONE
 #add edge contour filter maybe
-#omit the job splitter thing
-#really should also have a max area...
+#omit the job splitter thing DONE
+#really should also have a max area DONE
 """
 Author: Brian Brogan
 Karolinska Intitutet
@@ -19,26 +19,48 @@ Fall 2024
 This script is designed to create a controlled parameter experiment to determine results for various ranges of watershed segmentation.
 """
 
-class MaskMaker:
-    '''Wrapper class for ControlSegmenter.'''
-    def __init__(self, 
-                 image_fname: str = None,
-                 channel_id: int = 1):
-        '''Constructor for MaskMaker.
+class ControlSegmenter():
+    '''Performs controlled-variable watershed segmentation experiment on prerpocessed image.'''
+    def __init__(self,
+                 image_fname,
+                 var_ranges: dict,
+                 controls: list | None, # controls must be of length 4 -> [dtp, dks, minca, maxca] (even if not all are to be tested), or None
+                 channel_id: int = 1, 
+                 preproc_defaults: list = [0, (11,11), (5,5)] 
+                 ):
+        '''Constructor for ControlSegmenter class. Reads variable ranges and automatically runs segmentation experiment.
         Params:
-            image_fname: (str) The directory form which the analysis image is pulled.
-            channel_id: (int) The channel of the image to be analyzed.'''
+            image_fname: (str) The filepath for the analysis image.
+            var_ranges: (dict) Organizing dictionary of variables to be tested in segmentation. 
+                        Options include distance transform percentile, dilation kernel size, 
+                        minimum or maximum cell area. Any choice of these three variables is supported.
+            controls: (list) The control list for the segmentation experiment. Controls must be 
+                      of length 3 or None in the order of var_ranges even if not all variables are specified for 
+                      testing. If controls is None, all 3 var_ranges must be specified and
+                      the median of each var_range will be imputed.
+            channel_id: (int) The channel of the image to be accessed.
+            preproc_defaults: (list) Default settings for MaskMaker.preprocess(). Used in ... maybe also move this up'''
         
+        assert controls is None or len(controls) == len(var_ranges), \
+            "Controls must be None or a list of the same length (and order) as var_ranges.keys"
+        assert var_ranges is not None and len(var_ranges) > 0, \
+            "Test parameters and ranges must be specified for analysis."
         self.image_fname = image_fname
         self.channel_id = channel_id
-        self.preproc = None
+        self.var_ranges = var_ranges
+        self.var_ranges_keys = list(self.var_ranges.keys())
+        self.var_ranges_values = list(self.var_ranges.values())
+        self.controls = controls
+        self.preproc_defaults = preproc_defaults
+        self.preproc = self.preprocess(self.preproc_defaults[0], self.preproc_defaults[1], self.preproc_defaults[2])
+        self.var_seg_fulldf = self.variable_segmentation_fulldf()
 
     def preprocess(self,
                    threshline=0,
                    gauss_ksize=(11,11), 
                    opening_ksize=(5,5)):
-        '''Helper method for ControlSegmenter.watershed. Performs preprocessing steps for more accurate segmentation.
-        Imports, slices, thresholds, blurs, and opens the image specified at the image_fname attr.
+        '''Performs preprocessing steps for more accurate segmentation. Imports, slices, thresholds, blurs, and opens the 
+        image specified at the image_fname attr.
         Params:
             gauss_ksize: (tuple) default = (11,11) The kernel size for the Gaussian blurring.
             threshline: (int) default = 0 The threshold of binarization of the image after Gaussian blurring.
@@ -54,7 +76,7 @@ class MaskMaker:
             img = img[:, :, self.channel_id]
         else:
             raise IndexError("Channel ID is out of bounds for the image dimensions.")
-        #print("Collected Image from ", self.image_fname, " with shape ", img.shape, flush=True)
+        print("Collected Image from ", self.image_fname, " with shape ", img.shape, flush=True)
         assert threshline < np.max(img), "Threshold above bounds of image intensity range."
         blur = cv2.GaussianBlur(img,
                                 gauss_ksize, 0)
@@ -64,45 +86,6 @@ class MaskMaker:
                                       cv2.getStructuringElement(cv2.MORPH_ELLIPSE, opening_ksize), 
                                       iterations=1)
         return opened_img
-
-class ControlSegmenter(MaskMaker):
-    '''Subclass of MaskMaker. Performs controlled-variable watershed segmentation experiment on image 
-    preprocessed by MaskMaker superclass.'''
-    def __init__(self,
-                 image_fname, # IS THIS NEEDED ???
-                 var_ranges: dict,
-                 controls: list | None, # controls must be of length 3 -> [dtp, dks, mca] (even if not all are to be tested), or None
-                 #area_filter_jobn: int = 4,
-                 channel_id: int = 1, # IS THIS NEEDED ???,
-                 preproc_defaults: list = [0, (11,11), (5,5)] 
-                 ):
-        '''Constructor for ControlSegmenter class. Calls MaskMaker constructor. Reads variable 
-        ranges and automatically runs segmentation experiment.
-        Params:
-            image_fname: TRY TO GET RIDDA DIS
-            var_ranges: (dict) Organizing dictionary of variables to be tested in segmentation. 
-                        Options include distance transform percentile, dilation kernel size, or 
-                        minimum cell area. Any choice of these three variables is supported.
-            controls: (list) The control list for the segmentation experiment. Controls must be 
-                      of length 3 or None in the order of var_ranges even if not all variables are specified for 
-                      testing. If controls is None, all 3 var_ranges must be specified and
-                      the median of each var_range will be imputed.
-            channel_id: ALSO TRY TO GET RID OF THIS
-            preproc_defaults: (list) Default settings for MaskMaker.preprocess(). Used in ... maybe also move this up'''
-        
-        super().__init__(image_fname, channel_id)
-        assert controls is None or len(controls) == len(var_ranges), \
-            "Controls must be None or a list of the same length (and order) as var_ranges.keys"
-        assert var_ranges is not None and len(var_ranges) > 0, \
-            "Test parameters and ranges must be specified for analysis."
-        self.var_ranges = var_ranges
-        self.var_ranges_keys = list(self.var_ranges.keys())
-        self.var_ranges_values = list(self.var_ranges.values())
-        self.controls = controls
-        #self.area_filter_jobn = area_filter_jobn
-        self.preproc_defaults = preproc_defaults
-        self.preproc = self.preprocess(self.preproc_defaults[0], self.preproc_defaults[1], self.preproc_defaults[2])
-        self.var_seg_fulldf = self.variable_segmentation_fulldf()
 
     def variable_segmentation_fulldf(self):
         '''Method for populating the variable segmentation Dataframe. Implements the variable engine for each range of variables. 
@@ -168,14 +151,12 @@ class ControlSegmenter(MaskMaker):
     def watershed(self, param_list):
         '''Verbosely performs a single watershed segmentation based on super.preproc using parameters in param_list.
         Params:
-            param_list: (list) Contains the three test parameters in the following order: dtp, dks, mca.
+            param_list: (list) Contains the three test parameters in the following order: dtp, dks, minca, maxca.
         Returns: 
             markers: (array) Marker array calculated by openCV.watershed. Mimics shape of super.preproc.
             filtered_contours: (list) Sifted contour array calculated by self.findsift_contours.'''
         
-        dtp,dks,mca = param_list
-        #self.preproc = None 
-        #self.preproc = self.preprocess(opening_ksize=(int(dks), int(dks))) ### THIS SHOULD NOT BE HERE
+        dtp,dks,minca,maxca = param_list
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
         steps = [
             ("dilating", lambda: cv2.dilate(self.preproc, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dks, dks)), iterations=1)),
@@ -207,17 +188,18 @@ class ControlSegmenter(MaskMaker):
                 markers = result
 
         print("Sifting contours...", flush=True)
-        filtered_contours = self.findsift_contours(markers, mca)
+        filtered_contours = self.findsift_contours(markers, minca, maxca)
         print(f'{len(filtered_contours)} CELLS FOUND', flush=True)
         return markers, filtered_contours
 
-    def findsift_contours(self, markers, mca):
+    def findsift_contours(self, markers, minca, maxca):
         '''Verbose contour finder for segmentation marker array. Creates binary mask for each marker and applies openCV.findContours().
-          Once calculated contours are sifted for minimum area (mca).
+          Once calculated contours are sifted for minimum/maximum area (minca, maxca).
         Params:
             markers: (array) Array of segmentation markers. Binary masks are created for each unqiue nonzero (background) value of the 
                      marker array
-            mca (int) The minimum required contour area for post-caluclation sifting.'''
+            minca: (int) The minimum required contour area for post-caluclation sifting.
+            maxca: (int) The maximum allotted contour area for post-calculation sifitng.'''
         
         all_contours = []
         unique_labels = np.unique(markers)
@@ -227,7 +209,7 @@ class ControlSegmenter(MaskMaker):
             for i, label in enumerate(unique_labels, 1):
                 binary_mask = (markers == label).astype(np.uint8) * 255
                 contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-                filtered_contours = [cnt.tolist() for cnt in contours if cv2.contourArea(cnt) >= mca]
+                filtered_contours = [cnt.tolist() for cnt in contours if maxca >= cv2.contourArea(cnt) >= minca]
                 all_contours.extend(filtered_contours)
                 pbar.set_postfix_str(f"{i}/{len(unique_labels)}")
                 pbar.update(1)
@@ -291,12 +273,11 @@ if __name__ == "__main__":
     maxca_step = 25
 
 
-
-
     watershed_var_ranges = {
         'dt_percentile': np.arange(dtp[0], dtp[1]+1, dtp_step),
         'dilation_kernel_size': np.arange(dks[0], dks[1]+1, dks_step, dtype=np.uint8),
-        'minimum_cell_area': np.arange(minca[0], minca[1]+1, minca_step)
+        'minimum_cell_area': np.arange(minca[0], minca[1]+1, minca_step),
+        'maximum_cell_area': np.arange(maxca[0], maxca[1]+1, maxca_step)
     }
 
     print("Origin Data File: ", origin_csv_fname)
@@ -307,16 +288,15 @@ if __name__ == "__main__":
     #tiff.imwrite('figures/MaskMaker_test1.tiff', masker.preproc, photometric='minisblack')
     test_segmenter = ControlSegmenter(image_fname= image_fname,
                                       var_ranges= watershed_var_ranges,
-                                      controls= [
-                                                 90,
+                                      controls= [90,
                                                  5,
-                                                 100
-                                      ],
+                                                 100,
+                                                 900],
                                       #area_filter_jobn=4,
                                       channel_id=1
                                       )
     test_segmenter.export()
     print(test_segmenter.var_seg_fulldf.info())
     print(test_segmenter.var_seg_fulldf.head())
-    print(test_segmenter.var_seg_fulldf.shape)
-    print(len(test_segmenter.var_seg_fulldf.loc[0, 'contours']))
+    #print(test_segmenter.var_seg_fulldf.shape)
+    #print(len(test_segmenter.var_seg_fulldf.loc[0, 'contours']))
