@@ -13,6 +13,7 @@ import os
 import fastparquet
 from tqdm import tqdm
 import json
+from scipy.spatial import KDTree
 
 import gc
 from joblib import Parallel, delayed
@@ -23,6 +24,7 @@ from joblib import Parallel, delayed
     #contours DONE
     #markers DONE
 # Make testidx and thinner before pos/neg masks
+# Use the DataManager
 # create pos/neg masks for quick comparison to origin
     # Only have cell specific true pos false neg, false pos and true neg are rates bc no cell assignment
     # create numpy mask for each contour and pull positive coords or find better way...
@@ -30,22 +32,21 @@ from joblib import Parallel, delayed
     # remember representative percentage
 
 class Indicator:
+        #need to add some kind of dictionary support for mask making
     def __init__(self,
-                 origin_csv_fname: str = None,
-                 annotation_fname: str = None,
+                 origin_csv: pd.DataFrame,
+                 annotation: pd.DataFrame,
                  indicator_minimum: int = 30000,
                  positive_id: int = 0,
                  negative_ids: int|list = [4,5,11,13]
                  ):
-        self.origin_csv_fname = origin_csv_fname
-        self.annotation_fname = annotation_fname
-        self.origin_csv = pd.read_csv(self.origin_csv_fname)
-        self.annotation = pd.read_csv(self.annotation_fname)
+        self.origin_csv = origin_csv
+        self.annotation = annotation
         self.indicator_minimum = indicator_minimum
         self.positive_id = positive_id
         self.negative_ids = negative_ids
         self.positive_indicators = self.find_pos_indicators()
-        self.negative_indicators = self.find_negative_indicators()
+        self.negative_indicators = self.find_neg_indicators()
         self.indicators = self.create_full_indicator_df()
 
     def find_gene_set(self,
@@ -84,10 +85,9 @@ class Indicator:
             pbar.update(1)
             pos_indicators = self.filter_indicators(pos_cluster_df)
             pbar.update(1)
-        
         return pos_indicators
     
-    def find_negative_indicators(self):
+    def find_neg_indicators(self):
         neg_indicators = pd.DataFrame(columns=['geneID', 'count', 'cluster', 'type'])
         with tqdm(total=len(self.negative_ids), desc="Finding negative indicators", unit="cluster") as pbar:
             for clust_id in self.negative_ids:
@@ -112,58 +112,27 @@ class Indicator:
 
 class Comparator:
     def __init__(self, 
-                 indicator: Indicator = None,
+                 indicator: Indicator,
+                 metadata: pd.DataFrame,
+                 markers: pd.Series,
+                 contours: pd.Series,
                  rep_perc: float = 1.0
                  ):
+        self.parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.indicator = indicator
-        self.origin_csv_fname = self.indicator.origin_csv_fname
-        self.origin_df = self.indicator.origin_csv
-        self.pos_indicators = self.indicator.pos_indicators 
-        self.neg_indicators = self.indicator.neg_indicators
+        self.origin_csv = self.indicator.origin_csv
+        self.annotaion = self.indicator.annotation
+        self.metadata = metadata
+        self.markers = markers
+        self.contours = contours
+        self.pos_indicators = self.indicator.positive_indicators 
+        self.neg_indicators = self.indicator.negative_indicators
         self.rep_perc = rep_perc
-        # use tqdm to display importation tasks #
-        
-        self.metadata = self.import_metadata() # read parquet -> DataFrame DONE
-        self.markers = self.import_markers() # read json -> DataFrame DONE
-        self.contours = self.import_contours() # read json -> DataFrame DONE
         self.testidx = self.set_testidx() 
         self.thin()
 
-    def import_metadata(self, 
-                        in_dir: str = 'mask_maker_output'
-                        ):
-        pq_path = os.path.join(in_dir, 'variable_segmentation_metadata.parquet')
-        metadata = pd.read_parquet(pq_path, engine='fastparquet')
-        return metadata
-    
-    def import_markers(self, 
-                        in_dir: str = 'mask_maker_output'
-                        ):
-        # add tqdm
-        temp = []
-        markers_path = os.path.join(in_dir, "markers.json")
-        with open(markers_path, 'r') as f:
-            markers_data = json.load(f)
-        for iseg_mark_list in markers_data:
-            temp.append([np.array(mark, dtype=np.int32) for mark in iseg_mark_list if len(mark)>1])
-        mark_df = pd.DataFrame({'marker_arrs': temp}, dtype='object')
-        return mark_df
-
-    def import_contours(self, 
-                        in_dir: str = 'mask_maker_output'
-                        ):
-        # add tqdm
-        temp = []
-        contours_path = os.path.join(in_dir, "contours.json")
-        with open(contours_path, 'r') as f:
-            contours_data = json.load(f)
-        for iseg_cont_list in contours_data:
-            temp.append([np.array(cont, dtype=np.int32) for cont in iseg_cont_list if len(cont)>1])
-        cont_df = pd.DataFrame({'contour_arrs': temp}, dtype='object')
-        return cont_df
-
     def set_testidx(self):
-        test_length = np.ceil(len(self.metadata) * self.rep_perc)
+        test_length = int(np.ceil(len(self.metadata) * self.rep_perc))
         ids = np.sort(np.random.choice(len(self.metadata), test_length, replace=False))
         return ids
     
@@ -172,17 +141,41 @@ class Comparator:
         self.contours = self.contours.iloc[self.testidx]
         self.markers = self.markers.iloc[self.testidx]
 
+
+## USE MARKERS FOR COMPARISON 
+# ## best way to do it is make a mask for the indicators to subtract from markers array
+# avoid np.where
+
+    def create_indicator_mask(self,
+                              #origin_img_fname: str,
+                              xrange: tuple = None,
+                              yrange: tuple = None,
+                              indicators: dict = None #key is a string (geneID), value is 1 or -1 to show positive or negative inficator
+                              ):
+        # needs testing, maybe more optimize 
+        mask = np.zeros((xrange[1]-xrange[0], yrange[1]-yrange[0]), dtype=np.int8)
+        for ind, value in indicators.items():
+            sub_origin = self.origin_csv.iloc[self.origin_csv['geneID']==ind]
+            grabs_inds = (
+                (xrange[0] <= sub_origin['x']) & (sub_origin['x'] <= xrange[1]) &
+                (yrange[0] <= sub_origin['y']) & (sub_origin['y'] <= yrange[1])
+            )
+            grabs = sub_origin.loc[grabs_inds]
+            x_coords = (grabs['x'] - xrange[0]).astype(int).to_numpy()
+            y_coords = (grabs['y'] - yrange[0]).astype(int).to_numpy()
+            mask[y_coords, x_coords] = value
+        return mask
+
     def create_pos_mask(self):
+        # this is a mask for the INDICATORS not for cells
+        # might be combined in above function
         pass
 
     def create_neg_mask(self, 
                         n_indicators: int = 10
                         ):
-        pass
-
-    def run_comparison(self, 
-                       mask_df: pd.DataFrame = None
-                       ):
+        # this is a mask for the INDICATORS not for cells
+        # might be combined in above function
         pass
 
     def compare_engine(self):
@@ -194,86 +187,21 @@ class Comparator:
         pass
 
 
-def view_contour(contour_series, idx):
-    contours = contour_series.iloc[idx]
-    x_vals, y_vals = zip(*[point[0] for point in contours])
-    max_x, max_y = max(x_vals), max(y_vals)
-    image = np.zeros((max_y + 10, max_x + 10), dtype=np.uint8)
-    cv2.drawContours(image, contours, -1, 255, thickness=1)
-    plt.imshow(image, cmap='gray')
-    plt.title("Contour Visualization")
-    plt.axis("off")
-    plt.show()
-
-def visualize_contours(contours):
-    # Initialize min and max values with large/small extremes
-    min_x, min_y = float('inf'), float('inf')
-    max_x, max_y = -float('inf'), -float('inf')
-
-    for i, contour in enumerate(contours):
-        print(i)
-        #print(contour.shape)
-        # Extract x and y values for each contour
-        x_vals, y_vals = zip(*[point[0] for point in contour])  # Extract x, y pairs
-        
-        # Update min/max values
-        min_x, min_y = min(min_x, min(x_vals)), min(min_y, min(y_vals))
-        max_x, max_y = max(max_x, max(x_vals)), max(max_y, max(y_vals))
-
-    # Create an image of the required size
-    image = np.zeros((max_y - min_y + 10, max_x - min_x + 10), dtype=np.uint8)
-    
-    # Draw each contour (shifted to fit in the image)
-    for contour in contours:
-        #contour_shifted = np.array([[pt[0] - min_x, pt[1] - min_y] for pt in contour], dtype=np.int32)
-        contour_shifted = np.array([[pt[0][0] - min_x, pt[0][1] - min_y] for pt in contour], dtype=np.int32)
-        cv2.drawContours(image, [contour_shifted], -1, 255, thickness=1)
-    
-    # Plot the image
-    plt.imshow(image, cmap='gray')
-    plt.title("Contours Visualization")
-    plt.axis('off')
-    plt.show()
-
-def test_import_metadata(pqfname):
-    metadata = pd.read_parquet(pqfname, engine='fastparquet')
-    return metadata
-
-def test_import_contours(in_dir: str = None):
-    contours = []
-    contours_path = os.path.join(in_dir, "contours.json")
-    with open(contours_path, 'r') as f:
-        contours_data = json.load(f)
-    for iseg_cont_list in contours_data:
-        contours.append([np.array(cont, dtype=np.int32) for cont in iseg_cont_list if len(cont)>1])
-    cont_df = pd.DataFrame({'contour_arrs': contours}, dtype='object')
-    return cont_df
-
-def test_import_markers(in_dir: str = 'mask_maker_output'):
-    temp = []
-    markers_path = os.path.join(in_dir, "markers.json")
-    with open(markers_path, 'r') as f:
-        markers_data = json.load(f)
-    for iseg_mark_list in markers_data:
-        temp.append([np.array(mark, dtype=np.int32) for mark in iseg_mark_list if len(mark)>1])
-    mark_df = pd.DataFrame({'marker_arrs': temp}, dtype='object')
-    return mark_df
-
 
 if __name__ == '__main__':
-    contours = test_import_markers(
+    """contours = test_import_markers(
         '/Users/brianbrogan/Desktop/KI24/SpatialSegmentation/mask_maker_output'
     )
     print(contours.head(10))
     print(contours.shape)
     print(contours.columns)
-    print(type(contours.iloc[0]))
+    print(type(contours.iloc[0]))"""
 
     #visualize_contours(contours.loc[40, 'contour_arrs'])
 
-    '''indicatorTester = Indicator(
+    indicatorTester = Indicator(
         origin_csv_fname='/Users/brianbrogan/Desktop/KI24/ClusterImgGen2024/STERSEQ/input/1996-081_GFM_SS200000954BR_A2_tissue_cleaned_cortex_crop.csv',
         annotation_fname='/Users/brianbrogan/Desktop/KI24/ClusterImgGen2024/STERSEQ/output/01. Co-expression network/1996-081_GFM_SS200000954BR_A2_bin100_tissue_cleaned/Cluster_annotation.csv'
         )
-    print(indicatorTester.indicators.head(25))'''
+    print(indicatorTester.indicators.head(25))
 
