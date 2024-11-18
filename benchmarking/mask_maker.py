@@ -6,7 +6,12 @@ import tifffile as tiff
 from tqdm import tqdm
 import os
 import json
+import fastparquet
 
+#fix preprocess thing DONE
+#add edge contour filter maybe
+#omit the job splitter thing
+#really should also have a max area...
 """
 Author: Brian Brogan
 Karolinska Intitutet
@@ -26,11 +31,11 @@ class MaskMaker:
         
         self.image_fname = image_fname
         self.channel_id = channel_id
-        self.preproc = None ### PUT PREPROC IMAGE BACK HERE ###
+        self.preproc = None
 
     def preprocess(self,
-                   gauss_ksize=(11,11), 
                    threshline=0,
+                   gauss_ksize=(11,11), 
                    opening_ksize=(5,5)):
         '''Helper method for ControlSegmenter.watershed. Performs preprocessing steps for more accurate segmentation.
         Imports, slices, thresholds, blurs, and opens the image specified at the image_fname attr.
@@ -96,6 +101,7 @@ class ControlSegmenter(MaskMaker):
         self.controls = controls
         #self.area_filter_jobn = area_filter_jobn
         self.preproc_defaults = preproc_defaults
+        self.preproc = self.preprocess(self.preproc_defaults[0], self.preproc_defaults[1], self.preproc_defaults[2])
         self.var_seg_fulldf = self.variable_segmentation_fulldf()
 
     def variable_segmentation_fulldf(self):
@@ -168,8 +174,8 @@ class ControlSegmenter(MaskMaker):
             filtered_contours: (list) Sifted contour array calculated by self.findsift_contours.'''
         
         dtp,dks,mca = param_list
-        self.preproc = None 
-        self.preproc = self.preprocess(opening_ksize=(int(dks), int(dks))) ### THIS SHOULD NOT BE HERE
+        #self.preproc = None 
+        #self.preproc = self.preprocess(opening_ksize=(int(dks), int(dks))) ### THIS SHOULD NOT BE HERE
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
         steps = [
             ("dilating", lambda: cv2.dilate(self.preproc, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dks, dks)), iterations=1)),
@@ -277,14 +283,20 @@ if __name__ == "__main__":
     dks_step = 1
 
     # Minimum Cell Area Count (pixels)
-    mca = [50, 200]
-    mca_step = 10
+    minca = [50, 200]
+    minca_step = 25
+
+    # Maximum Cell Area Count (pixels)
+    maxca = [850, 1000]
+    maxca_step = 25
+
+
 
 
     watershed_var_ranges = {
         'dt_percentile': np.arange(dtp[0], dtp[1]+1, dtp_step),
         'dilation_kernel_size': np.arange(dks[0], dks[1]+1, dks_step, dtype=np.uint8),
-        'minimum_cell_area': np.arange(mca[0], mca[1]+1, mca_step)
+        'minimum_cell_area': np.arange(minca[0], minca[1]+1, minca_step)
     }
 
     print("Origin Data File: ", origin_csv_fname)
@@ -306,3 +318,5 @@ if __name__ == "__main__":
     test_segmenter.export()
     print(test_segmenter.var_seg_fulldf.info())
     print(test_segmenter.var_seg_fulldf.head())
+    print(test_segmenter.var_seg_fulldf.shape)
+    print(len(test_segmenter.var_seg_fulldf.loc[0, 'contours']))
