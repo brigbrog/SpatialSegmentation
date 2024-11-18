@@ -91,7 +91,7 @@ class DataManager:
 
             mask[y_coords, x_coords] = value
 
-            return mask
+        return mask
         
         
 
