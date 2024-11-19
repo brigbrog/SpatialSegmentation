@@ -42,33 +42,35 @@ class Indicator:
                  pos_spec: list = None,
                  neg_spec: list = None,
                  indicator_minimum: int = 30000,
+                 n_neg: int = 10,
                  positive_id: int = 0,
                  negative_ids: int|list = [4,5,11,13]
                  ):
         self.origin_csv = origin_csv
         self.annotation = annotation
         self.indicator_minimum = indicator_minimum
+        self.n_neg = n_neg
         self.positive_id = positive_id
         self.negative_ids = negative_ids
         if specify:
-            self.postive_indicators = self.get_pos_spec_dict(pos_spec)
-            self.negative_indicators = self.get_neg_spec_dict(neg_spec)
-            self.indicators = self.create_spec_indicator_df()
+            assert pos_spec is not None and neg_spec is not None, \
+            "pos_spec and neg_spec must be populated for specified indicator DataFrame creation."
+            self.postive_indicators = self.get_pos_spec_df(pos_spec)
+            self.negative_indicators = self.get_neg_spec_df(neg_spec)
         elif not specify: 
             self.positive_indicators = self.find_pos_indicators_df()
-            self.negative_indicators = self.find_neg_indicators()
-            self.indicators = self.create_full_indicator_df()
+            self.negative_indicators = self.find_neg_indicators_df(self.n_neg)
+        self.indicators = self.create_full_indicator_df()
 
-    def get_pos_spec_dict(self, pos_spec):
-        pass
+    def get_pos_spec_df(self, pos_spec):
+        pos_spec_df = pd.DataFrame({"geneID": pos_spec, "type": "pos"})
+        return pos_spec_df
 
-    def get_neg_spec_dict(self, neg_spec):
-        pass
+    def get_neg_spec_df(self, neg_spec):
+        neg_spec_df = pd.DataFrame({"geneID": neg_spec, "type": "pos"})
+        return neg_spec_df
 
-    def create_spec_indicator_df(self):
-        pass
-
-    def find_gene_set(self,
+    def get_gene_set(self,
                       id: int = None):
         assert id is not None, \
             "Cluster ID must be provided to pull indicators."
@@ -85,7 +87,6 @@ class Indicator:
     def filter_indicators(self, 
                           cluster_df: pd.DataFrame = None,
                           indicator_type: str = 'min_count', #'min_count' or 'spec'
-                          n: int = 5
                           ):
         assert indicator_type == 'min_count' or indicator_type == 'spec',\
             "indicator_type must either be 'min_count' or 'spec'."
@@ -93,12 +94,12 @@ class Indicator:
         if indicator_type == 'min_count':
             indicators = indicators.loc[indicators>= self.indicator_minimum]
         elif indicator_type == 'spec':
-            indicators = indicators.iloc[:n]
+            indicators = indicators.iloc[:self.n_neg]
         return indicators
     
     def find_pos_indicators_df(self):
         with tqdm(total=3, desc="Finding positive indicators", unit="step") as pbar:
-            pos_genes = self.find_gene_set(self.positive_id)
+            pos_genes = self.get_gene_set(self.positive_id)
             pbar.update(1)
             pos_df = self.create_cluster_df(pos_genes)
             pbar.update(1)
@@ -111,7 +112,7 @@ class Indicator:
     
     def find_pos_indicators_series(self):
         with tqdm(total=3, desc="Finding positive indicators", unit="step") as pbar:
-            pos_genes = self.find_gene_set(self.positive_id)
+            pos_genes = self.get_gene_set(self.positive_id)
             pbar.update(1)
             pos_cluster_df = self.create_cluster_df(pos_genes)
             pbar.update(1)
@@ -119,26 +120,13 @@ class Indicator:
             pbar.update(1)
         return pos_indicators
     
-    '''def find_pos_indicators_df(self):
-        pos_indicators = pd.DataFrame(columns=['geneID', 'count', 'cluster', 'type'])
-        pos_genes = self.find_gene_set(self.positive_id)
-        pos_df = self.create_cluster_df(pos_genes)
-        pos_inds = self.filter_indicators(pos_df, 'min_count')
-        temp_df = pos_inds.reset_index()
-        temp_df.columns = ['geneID', 'count']
-        temp_df['cluster'] = self.positive_id
-        temp_df['type'] = 'pos'
-        pos_indicators = pd.concat([pos_indicators, temp_df], ignore_index=True)
-        return pos_indicators'''
-    
-    
-    def find_neg_indicators(self):
+    def find_neg_indicators_df(self, n):
         neg_indicators = pd.DataFrame(columns=['geneID', 'count', 'cluster', 'type'])
         with tqdm(total=len(self.negative_ids), desc="Finding negative indicators", unit="cluster") as pbar:
             for clust_id in self.negative_ids:
-                clust_genes = self.find_gene_set(clust_id)
+                clust_genes = self.get_gene_set(clust_id)
                 cluster_df = self.create_cluster_df(clust_genes)
-                cluster_indicators = self.filter_indicators(cluster_df, 'spec', n=3)
+                cluster_indicators = self.filter_indicators(cluster_df, 'spec')
                 temp_df = cluster_indicators.reset_index()
                 temp_df.columns = ['geneID', 'count']
                 temp_df['cluster'] = clust_id
@@ -146,14 +134,6 @@ class Indicator:
                 neg_indicators = pd.concat([neg_indicators, temp_df], ignore_index=True)
                 pbar.update(1)
         return neg_indicators
-    
-    '''def create_full_indicator_df_old(self):
-        temp_pos = self.positive_indicators.reset_index()
-        temp_pos.columns = ['geneID', 'count']
-        temp_pos['cluster'] = self.positive_id
-        temp_pos['type'] = 'pos'
-        indicators_fulldf = pd.concat([temp_pos, self.negative_indicators], ignore_index=True)
-        return indicators_fulldf.sort_values(by='count', ascending=False)'''
     
     def create_full_indicator_df(self):
         indicators_full_df = pd.concat([self.positive_indicators, self.negative_indicators], ignore_index=True)
@@ -182,11 +162,11 @@ class Comparator:
         self.metadata = metadata
         self.markers = markers
         self.contours = contours
+        self.indicator_mask = None
         self.rep_perc = rep_perc
         self.testidx = self.set_testidx() 
         self.thin()
 
-# for thinning
     def set_testidx(self):
         test_length = int(np.ceil(len(self.metadata) * self.rep_perc))
         ids = np.sort(np.random.choice(len(self.metadata), test_length, replace=False))
@@ -198,8 +178,6 @@ class Comparator:
         self.markers = self.markers.iloc[self.testidx]
 
     
-
-
 ## USE MARKERS FOR COMPARISON 
 # ## best way to do it is make a mask for the indicators to subtract from markers array
 # avoid np.where
@@ -226,7 +204,15 @@ class Comparator:
             y_coords = ((yrange[1] - grabs['y']).astype(int).to_numpy())
 
             mask[y_coords, x_coords] = value
+        self.indicator_mask = mask
         return mask
+    
+    def rgb_indicator_mask(self,
+                           mask: np.ndarray):
+        rgb = np.zeros((*mask.shape, 3), dtype=np.uint8)
+        rgb[mask == -1] = [255, 0, 0]
+        rgb[mask == 1] = [0, 255, 0]
+        return rgb
     
 
     def create_pos_mask(self):
