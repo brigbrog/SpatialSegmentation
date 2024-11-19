@@ -191,14 +191,13 @@ class Comparator:
                               yrange: tuple = None,
                               indicators: dict = None #key is a string (geneID), value is 1 or -1 to show positive or negative inficator
                               ):
-        ## MASK INITIALIZATION IS FUCKED UP ##
         # can pass positive, negative, or both dictionary as long as format is correct
         mask = np.zeros(((xrange[1])-xrange[0], (yrange[1])-yrange[0]), dtype=np.int8)
-        for ind, value in indicators.items():
-            sub_origin = self.origin_csv.loc[self.origin_csv['geneID']==ind]
+        for indID, value in indicators.items():
+            sub_origin = self.origin_csv.loc[self.origin_csv['geneID']==indID]
             grabs_inds = (
-                (xrange[0] <= sub_origin['x']) & (sub_origin['x'] <= xrange[1]) &
-                (yrange[0] <= sub_origin['y']) & (sub_origin['y'] <= yrange[1])
+                (xrange[0] < sub_origin['x']) & (sub_origin['x'] < xrange[1]) &
+                (yrange[0] < sub_origin['y']) & (sub_origin['y'] < yrange[1])
             )
             grabs = sub_origin.loc[grabs_inds]
             #x_coords = (grabs['x'] - xrange[0]).astype(int).to_numpy()
@@ -215,11 +214,11 @@ class Comparator:
                        yrange, 
                        indicators):
         res = pd.DataFrame(columns=['test_paramID', 'mark', 'total', 'n_true_pos', 'n_false_neg'])
-        self.create_indicator_mask(xrange, yrange, indicators)
+        self.create_indicator_mask(xrange, yrange, self.indicator.create_indicator_dict(indicators))
         for i, marker_arr in enumerate(self.markers):
             test_paramID = self.metadata.loc[i, 'test_paramID']
-            pd.concat([res, self.run_comp_series(self.indicator_mask, marker_arr, test_paramID)], ignore_index=True)
-        return 
+            res = pd.concat([res, self.run_comp_series(self.indicator_mask, marker_arr, test_paramID)], ignore_index=True)
+        return res
 
     def run_comp_series(self,
                         ind_mask: np.ndarray,
@@ -228,9 +227,11 @@ class Comparator:
                         ):
         res = pd.DataFrame(columns=['test_paramID', 'mark', 'total', 'n_true_pos', 'n_false_neg'])
         targets = np.unique(marker_array)[1:]
-        test_len = int(np.ceil(len(targets) * self.rep_perc))
-        test_idx = np.sort(np.random.choice(len(self.metadata), test_len, replace=False))
-        targets = targets[test_idx]
+        ## FIX THIS LATER - INVOLVES REP PERC
+        #test_len = int(np.ceil(len(targets) * self.rep_perc))
+        #test_len = min(test_len, len(targets))
+        #test_idx = np.sort(np.random.choice(len(self.metadata), test_len, replace=False))
+        #targets = targets[test_idx]
         for target in targets:
             total, tp, fn = self.count_marker_and_indicators(ind_mask,
                                                              marker_array,
@@ -249,21 +250,18 @@ class Comparator:
                                     marker_array,
                                     target
                                     ):
-        print(ind_mask.shape)
-        print(marker_array.shape)
+        #print(ind_mask.shape)
+        #print(marker_array.shape)
         #assert ind_mask.shape == marker_array.shape,\
         #"problemo"
         mask = marker_array == target
         total_count = np.sum(mask)
-        print('total count: ', total_count)
+        #print('total count: ', total_count)
         positive_count = np.sum(ind_mask[mask] == 1)
         negative_count = np.sum(ind_mask[mask] == -1)
         return total_count, positive_count, negative_count
 
         
-
-
-
 
     def export_compare_data(self, 
                             out_df: pd.DataFrame = None,
@@ -313,13 +311,14 @@ if __name__ == '__main__':
     y_win = (6000, 7000)
     x_win = (9000, 10000)
 
-    neg_indic_mask = comparatorTester.create_indicator_mask(xrange = x_win, 
+    indic_mask = comparatorTester.create_indicator_mask(xrange = x_win, 
                                                             yrange = y_win,
-                                                            indicators = indicatorTester.create_indicator_dict(indicatorTester.negative_indicators))
+                                                            indicators = indicatorTester.create_indicator_dict(indicatorTester.indicators))
     
     print('done.', flush=True)
     
-    print(np.unique(neg_indic_mask))
+    print(np.unique(indic_mask))
+    print(indic_mask.shape)
 
-    plt.imshow(neg_indic_mask)
+    #plt.imshow(indic_mask)
 
