@@ -26,7 +26,7 @@ class ControlSegmenter():
                  var_ranges: dict,
                  controls: list | None, # controls must be of length 4 -> [dtp, dks, minca, maxca] (even if not all are to be tested), or None
                  channel_id: int = 1, 
-                 preproc_defaults: list = [0, (11,11), (5,5)] 
+                 preproc_defaults: list = [1, (11,11), (5,5)] 
                  ):
         '''Constructor for ControlSegmenter class. Reads variable ranges and automatically runs segmentation experiment.
         Params:
@@ -56,14 +56,14 @@ class ControlSegmenter():
         self.var_seg_fulldf = self.variable_segmentation_fulldf()
 
     def preprocess(self,
-                   threshline=0,
+                   threshline=1,
                    gauss_ksize=(11,11), 
                    opening_ksize=(5,5)):
         '''Performs preprocessing steps for more accurate segmentation. Imports, slices, thresholds, blurs, and opens the 
         image specified at the image_fname attr.
         Params:
-            gauss_ksize: (tuple) default = (11,11) The kernel size for the Gaussian blurring.
             threshline: (int) default = 0 The threshold of binarization of the image after Gaussian blurring.
+            gauss_ksize: (tuple) default = (11,11) The kernel size for the Gaussian blurring.
             opening_ksize: (tuple) default = (5,5) The kernel size for the opening (erosion then dilation) applied to the image.
         Returns:
             opened_img: The single-channel preprocessed image array.'''
@@ -244,15 +244,18 @@ class ControlSegmenter():
                 json.dump(json_data, f)
         print("Done.", flush=True)
 
+    
+
+
 
 if __name__ == "__main__": 
 
     # Import Pathnames
     origin_csv_fname = None
     full_tiff = '/Users/brianbrogan/Desktop/KI24/ClusterImgGen2024/STERSEQ/output/02. Images/02.1. Raw prediction/1996-081_GFM_SS200000954BR_A2_tissue_cleaned_cortex_crop/clusters/cluster0_from_1996-081_GFM_SS200000954BR_A2_bin100_tissue_cleaned_mean_r10_cap1000.tif'
-    png_slice = '/Users/brianbrogan/Desktop/KI24/figures/color_slice.png'
+    tiff_slice = '/Users/brianbrogan/Desktop/KI24/figures/test_slice.tiff'
 
-    image_fname = png_slice
+    image_fname = tiff_slice
 
     ## Variable Definition - start/stop - ensure range is divisible by step
 
@@ -296,6 +299,7 @@ if __name__ == "__main__":
                                       channel_id=1
                                       )
     test_segmenter.export()
+    #test_segmenter.save_tiff_slice()
     print(test_segmenter.var_seg_fulldf.info())
     print(test_segmenter.var_seg_fulldf.head())
     #print(test_segmenter.var_seg_fulldf.shape)
