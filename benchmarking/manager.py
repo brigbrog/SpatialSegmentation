@@ -13,9 +13,9 @@ class DataManager:
     def __init__(self,
                  origin_csv_fname: str = None,
                  annotation_fname: str = None, 
-                 metadata_fname: str = "mask_maker_output/variable_segmentation_metadata.parquet",
-                 markers_fname: str = "mask_maker_output/markers.json",
-                 contours_fname: str = "mask_maker_output/contours.json",
+                 metadata_fname: str = "/Users/brianbrogan/Desktop/KI24/mask_maker_output/variable_segmentation_metadata.parquet",
+                 markers_fname: str = "/Users/brianbrogan/Desktop/KI24/mask_maker_output/markers.json",
+                 contours_fname: str = "/Users/brianbrogan/Desktop/KI24/mask_maker_output/contours.json",
                  ):
         self.parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.origin_csv_fname = origin_csv_fname
