@@ -34,7 +34,6 @@ from joblib import Parallel, delayed
     # remember representative percentage
 
 class Indicator:
-        #need to add some kind of dictionary support for mask making
     def __init__(self,
                  origin_csv: pd.DataFrame,
                  annotation: pd.DataFrame,
@@ -50,6 +49,7 @@ class Indicator:
         self.annotation = annotation
         self.indicator_minimum = indicator_minimum
         self.n_neg = n_neg
+        # currently number of each cluster, maybe change to total ?
         self.positive_id = positive_id
         self.negative_ids = negative_ids
         if specify:
@@ -162,17 +162,21 @@ class Comparator:
         self.metadata = metadata
         self.markers = markers
         self.contours = contours
-        self.indicator_mask = None
         self.rep_perc = rep_perc
-        self.testidx = self.set_testidx() 
-        self.thin()
+        self.indicator_mask = None
+        self.comparison_df = None
+        
+        #self.testidx = self.set_testidx() 
+        #self.thin()
 
     def set_testidx(self):
+        # wrong, should not be slicing metadata, only markers/contours 1 level down
         test_length = int(np.ceil(len(self.metadata) * self.rep_perc))
         ids = np.sort(np.random.choice(len(self.metadata), test_length, replace=False))
         return ids
     
     def thin(self):
+        # wrong, should not be slicing metadata, only markers/contours 1 level down
         self.metadata = self.metadata.iloc[self.testidx]
         self.contours = self.contours.iloc[self.testidx]
         self.markers = self.markers.iloc[self.testidx]
@@ -183,13 +187,13 @@ class Comparator:
 # avoid np.where
 
     def create_indicator_mask(self,
-                              #origin_img_fname: str,
                               xrange: tuple = None,
                               yrange: tuple = None,
                               indicators: dict = None #key is a string (geneID), value is 1 or -1 to show positive or negative inficator
                               ):
-        # needs testing, maybe more optimize 
-        mask = np.zeros(((xrange[1]+1)-xrange[0], (yrange[1]+1)-yrange[0]), dtype=np.int8)
+        ## MASK INITIALIZATION IS FUCKED UP ##
+        # can pass positive, negative, or both dictionary as long as format is correct
+        mask = np.zeros(((xrange[1])-xrange[0], (yrange[1])-yrange[0]), dtype=np.int8)
         for ind, value in indicators.items():
             sub_origin = self.origin_csv.loc[self.origin_csv['geneID']==ind]
             grabs_inds = (
@@ -199,42 +203,79 @@ class Comparator:
             grabs = sub_origin.loc[grabs_inds]
             #x_coords = (grabs['x'] - xrange[0]).astype(int).to_numpy()
             #y_coords = (grabs['y'] - yrange[0]).astype(int).to_numpy()
-
             x_coords = ((xrange[1] - grabs['x']).astype(int).to_numpy())
             y_coords = ((yrange[1] - grabs['y']).astype(int).to_numpy())
-
             mask[y_coords, x_coords] = value
         self.indicator_mask = mask
         return mask
     
-    def rgb_indicator_mask(self,
-                           mask: np.ndarray):
-        rgb = np.zeros((*mask.shape, 3), dtype=np.uint8)
-        rgb[mask == -1] = [255, 0, 0]
-        rgb[mask == 1] = [0, 255, 0]
-        return rgb
-    
 
-    def create_pos_mask(self):
-        # this is a mask for the INDICATORS not for cells
-        # might be combined in above function
-        pass
+    def compare_engine(self,
+                       xrange,
+                       yrange, 
+                       indicators):
+        res = pd.DataFrame(columns=['test_paramID', 'mark', 'total', 'n_true_pos', 'n_false_neg'])
+        self.create_indicator_mask(xrange, yrange, indicators)
+        for i, marker_arr in enumerate(self.markers):
+            test_paramID = self.metadata.loc[i, 'test_paramID']
+            pd.concat([res, self.run_comp_series(self.indicator_mask, marker_arr, test_paramID)], ignore_index=True)
+        return 
 
-    def create_neg_mask(self, 
-                        n_indicators: int = 10
+    def run_comp_series(self,
+                        ind_mask: np.ndarray,
+                        marker_array: np.ndarray,
+                        test_paramID: str
                         ):
-        # this is a mask for the INDICATORS not for cells
-        # might be combined in above function
-        pass
+        res = pd.DataFrame(columns=['test_paramID', 'mark', 'total', 'n_true_pos', 'n_false_neg'])
+        targets = np.unique(marker_array)[1:]
+        test_len = int(np.ceil(len(targets) * self.rep_perc))
+        test_idx = np.sort(np.random.choice(len(self.metadata), test_len, replace=False))
+        targets = targets[test_idx]
+        for target in targets:
+            total, tp, fn = self.count_marker_and_indicators(ind_mask,
+                                                             marker_array,
+                                                             target)
+            toAdd = {'test_paramID': test_paramID,
+                     'mark': target,
+                     'total': total,
+                     'n_true_pos': tp,
+                     'n_false_neg': fn}
+            res.loc[len(res)] = toAdd
+        return res
+            
 
-    def compare_engine(self):
-        pass
+    def count_marker_and_indicators(self,
+                                    ind_mask,
+                                    marker_array,
+                                    target
+                                    ):
+        print(ind_mask.shape)
+        print(marker_array.shape)
+        #assert ind_mask.shape == marker_array.shape,\
+        #"problemo"
+        mask = marker_array == target
+        total_count = np.sum(mask)
+        print('total count: ', total_count)
+        positive_count = np.sum(ind_mask[mask] == 1)
+        negative_count = np.sum(ind_mask[mask] == -1)
+        return total_count, positive_count, negative_count
+
+        
+
+
+
 
     def export_compare_data(self, 
                             out_df: pd.DataFrame = None,
                             ):
         pass
 
+    def rgb_indicator_mask(self,
+                           mask: np.ndarray):
+        rgb = np.zeros((*mask.shape, 3), dtype=np.uint8)
+        rgb[mask == -1] = [255, 0, 0]
+        rgb[mask == 1] = [0, 255, 0]
+        return rgb
 
 
 if __name__ == '__main__':
