@@ -9,7 +9,7 @@ import json
 import fastparquet
 
 #fix preprocess thing DONE
-#add edge contour filter maybe
+#add edge contour filter 
 #omit the job splitter thing DONE
 #really should also have a max area DONE
 """
@@ -23,10 +23,11 @@ class ControlSegmenter():
     '''Performs controlled-variable watershed segmentation experiment on prerpocessed image.'''
     def __init__(self,
                  image_fname,
+                 test_window: list,
                  var_ranges: dict,
                  controls: list | None, # controls must be of length 4 -> [dtp, dks, minca, maxca] (even if not all are to be tested), or None
                  channel_id: int = 1, 
-                 preproc_defaults: list = [1, (11,11), (5,5)] 
+                 preproc_defaults: list = [0, (11,11), (5,5)] 
                  ):
         '''Constructor for ControlSegmenter class. Reads variable ranges and automatically runs segmentation experiment.
         Params:
@@ -47,16 +48,25 @@ class ControlSegmenter():
             "Test parameters and ranges must be specified for analysis."
         self.image_fname = image_fname
         self.channel_id = channel_id
+        self.test_image = self.import_tiff(test_window[0], test_window[1])
         self.var_ranges = var_ranges
         self.var_ranges_keys = list(self.var_ranges.keys())
         self.var_ranges_values = list(self.var_ranges.values())
         self.controls = controls
         self.preproc_defaults = preproc_defaults
-        self.preproc = self.preprocess(self.preproc_defaults[0], self.preproc_defaults[1], self.preproc_defaults[2])
+        #self.preproc = None
+        #self.preproc = self.preprocess(self.preproc_defaults[0], self.preproc_defaults[1], self.preproc_defaults[2])
         self.var_seg_fulldf = self.variable_segmentation_fulldf()
 
+    def import_tiff(self, xrange, yrange):
+        img = tiff.imread(self.image_fname)
+        img = img[:,:,self.channel_id]
+        img = img[yrange[0]:yrange[1], xrange[0]:xrange[1]]
+        return img
+
+
     def preprocess(self,
-                   threshline=1,
+                   threshline=0,
                    gauss_ksize=(11,11), 
                    opening_ksize=(5,5)):
         '''Performs preprocessing steps for more accurate segmentation. Imports, slices, thresholds, blurs, and opens the 
@@ -68,19 +78,20 @@ class ControlSegmenter():
         Returns:
             opened_img: The single-channel preprocessed image array.'''
         
-        assert self.image_fname is not None, "Image filepath must be specified to run analysis."
-        img = cv2.imread(self.image_fname, cv2.IMREAD_UNCHANGED)
-        if img is None:
-            raise ValueError("Could not read the image file: {}".format(self.image_fname))
-        if len(img.shape) > 2 and self.channel_id < img.shape[2]:
-            img = img[:, :, self.channel_id]
-        else:
-            raise IndexError("Channel ID is out of bounds for the image dimensions.")
-        print("Collected Image from ", self.image_fname, " with shape ", img.shape, flush=True)
-        assert threshline < np.max(img), "Threshold above bounds of image intensity range."
-        blur = cv2.GaussianBlur(img,
+        #assert self.image_fname is not None, "Image filepath must be specified to run analysis."
+        #img = cv2.imread(self.image_fname, cv2.IMREAD_UNCHANGED)
+        #self.test_img = self.import_tiff((9000, 10000), (6000, 7000))
+        #if self.test_image is None:
+            #raise ValueError("Could not read the image file: {}".format(self.image_fname))
+        #if len(img.shape) > 2 and self.channel_id < img.shape[2]:
+            #img = img[:, :, self.channel_id]
+        #else:
+            #raise IndexError("Channel ID is out of bounds for the image dimensions.")
+        print("Collected Image from ", self.image_fname, " with shape ", self.test_image.shape, flush=True)
+        assert threshline < np.max(self.test_image), "Threshold above bounds of image intensity range."
+        blur = cv2.GaussianBlur(self.test_image,
                                 gauss_ksize, 0)
-        _, bin_img = cv2.threshold(blur, threshline, np.max(img), cv2.THRESH_BINARY)
+        _, bin_img = cv2.threshold(blur, threshline, np.max(self.test_image), cv2.THRESH_BINARY)
         opened_img = cv2.morphologyEx(bin_img, 
                                       cv2.MORPH_OPEN, 
                                       cv2.getStructuringElement(cv2.MORPH_ELLIPSE, opening_ksize), 
@@ -97,8 +108,8 @@ class ControlSegmenter():
             minimum_cell_area, markers (arr), contours (arr).'''
         
         if self.controls is None:
-            if len(self.var_ranges) != 3:
-                raise ValueError("If full control list is not specified, var_ranges for all 3 params must be provided.")
+            if len(self.var_ranges) != 4:
+                raise ValueError("If full control list is not specified, var_ranges for all 4 params must be provided.")
             print("Imputing var_range medians for segmentation controls because none were specified.", flush=True)
             self.controls = [np.median(range).astype(np.uint8) for range in self.var_ranges_values]
         var_seg_fulldf = None
@@ -139,16 +150,44 @@ class ControlSegmenter():
             print(f'Engine running... testing setting {element}', flush=True)
             new_params = params.copy()
             new_params[test_id] = element
+            print(new_params)
+            #markers, contour_arr = self.watershed(new_params)
+            self.preproc = None
+            #self.preproc = self.preprocess(self.preproc_defaults[0], self.preproc_defaults[1], self.preproc_defaults[2])
             markers, contour_arr = self.watershed(new_params)
             results = {'test_paramID': self.var_ranges_keys[test_id] + str(i)}
-            results['num_cells'] = len(contour_arr)
+            #results['num_cells'] = len(contour_arr)
+            results['num_cells'] = np.unique(markers).shape[0]-1
             results.update({name: new_params[j] for j, name in enumerate(self.var_ranges_keys)})
             results['markers'] = markers.tolist() # keep as list for json
             results['contours'] = contour_arr
             round.loc[len(round)] = results
+            results = None
         return round
-
+    
     def watershed(self, param_list):
+        dtp,dks,minca,maxca = param_list
+        self.preproc = self.preprocess(self.preproc_defaults[0], self.preproc_defaults[1], (dks, dks))
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dks,dks))
+        sure_bg = cv2.dilate(self.preproc, kernel, iterations=1)
+        dist = cv2.distanceTransform(self.preproc, cv2.DIST_L2, 5)
+        _, sure_fg = cv2.threshold(dist, dtp * dist.max(), 255, cv2.THRESH_BINARY)
+        sure_fg = sure_fg.astype(np.uint8)
+        unknown = cv2.subtract(sure_bg, sure_fg)
+        #smoothed_dt = gaussian_filter(dist, sigma=1)
+        #threshold = np.percentile(smoothed_dt, dtp)
+        #local_maxima = (smoothed_dt > threshold).astype(np.uint8)
+        _, markers = cv2.connectedComponents(sure_fg)
+        markers += 1
+        markers[unknown == 255] = 0
+        markers = cv2.watershed(cv2.cvtColor(self.preproc, cv2.COLOR_GRAY2BGR), np.int32(markers))
+        markers, filtered_contours = self.sift_cells(markers, minca, maxca)
+        print(f'{len(np.unique(markers))-1} CELLS FOUND', flush=True)
+        return markers, filtered_contours
+
+
+
+    def old_watershed(self, param_list):
         '''Verbosely performs a single watershed segmentation based on super.preproc using parameters in param_list.
         Params:
             param_list: (list) Contains the three test parameters in the following order: dtp, dks, minca, maxca.
@@ -188,11 +227,11 @@ class ControlSegmenter():
                 markers = result
 
         print("Sifting contours...", flush=True)
-        filtered_contours = self.findsift_contours(markers, minca, maxca)
+        filtered_contours = self.sift_cells(markers, minca, maxca)
         print(f'{len(filtered_contours)} CELLS FOUND', flush=True)
         return markers, filtered_contours
 
-    def findsift_contours(self, markers, minca, maxca):
+    def sift_cells(self, markers, minca, maxca):
         '''Verbose contour finder for segmentation marker array. Creates binary mask for each marker and applies openCV.findContours().
           Once calculated contours are sifted for minimum/maximum area (minca, maxca).
         Params:
@@ -203,19 +242,29 @@ class ControlSegmenter():
         
         all_contours = []
         unique_labels = np.unique(markers)
-        unique_labels = unique_labels[unique_labels != 0]
+        #unique_labels = unique_labels[unique_labels != 0]
 
         with tqdm(total=len(unique_labels), desc='Sifting') as pbar:
             for i, label in enumerate(unique_labels, 1):
-                binary_mask = (markers == label).astype(np.uint8) * 255
-                contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-                filtered_contours = [cnt.tolist() for cnt in contours if maxca >= cv2.contourArea(cnt) >= minca]
+                target = (markers == label).astype(np.uint8) * 255
+                contours, _ = cv2.findContours(target, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                filtered_contours = []
+                for cnt in contours:
+                    if maxca >= cv2.contourArea(cnt) >= minca:
+                        filtered_contours.append(cnt.tolist())
+                    else:
+                        markers[markers==label] = -1
+
+                #filtered_contours = [cnt.tolist() for cnt in contours if maxca >= cv2.contourArea(cnt) >= minca]
+
                 all_contours.extend(filtered_contours)
                 pbar.set_postfix_str(f"{i}/{len(unique_labels)}")
                 pbar.update(1)
-        return all_contours
+        return markers, all_contours
 
-    def export(self, out_dir="mask_maker_output", parquet_name="variable_segmentation_metadata"):
+    def export(self,
+               out_dir="mask_maker_output",
+               parquet_name="variable_segmentation_metadata"):
         '''Export function for data collected by ControlSegmenter. Not automatically called during instance construction. 
         Ensures that DataFrame is correctly populated and exports parquet and json files. Parquet contains metadata from 
         variable segmenentation (test_paramID, num_cells, segmentation settings), markers.json and contours.json contains 
@@ -229,6 +278,7 @@ class ControlSegmenter():
         os.makedirs(out_dir, exist_ok=True)
         parquet_path = os.path.join(out_dir, parquet_name + ".parquet")
         print("Creating exports...", flush=True)
+        print(parquet_path)
         self.var_seg_fulldf.iloc[:, :-2].to_parquet(parquet_path, index=False)
         segmentation = self.var_seg_fulldf.iloc[:, -2:]
         for col in segmentation.columns: 
@@ -255,29 +305,30 @@ if __name__ == "__main__":
     full_tiff = '/Users/brianbrogan/Desktop/KI24/ClusterImgGen2024/STERSEQ/output/02. Images/02.1. Raw prediction/1996-081_GFM_SS200000954BR_A2_tissue_cleaned_cortex_crop/clusters/cluster0_from_1996-081_GFM_SS200000954BR_A2_bin100_tissue_cleaned_mean_r10_cap1000.tif'
     tiff_slice = '/Users/brianbrogan/Desktop/KI24/figures/test_slice.tiff'
 
-    image_fname = tiff_slice
+    image_fname = full_tiff
 
     ## Variable Definition - start/stop - ensure range is divisible by step
 
     # Distance Transform Percentile for Watershed Marker Definition
-    dtp = [80, 98]
-    dtp_step = 1
+    dtp = [0.1, 0.5] 
+    dtp_step = 0.05
 
     # Watershed Dilation Kernel Size
     dks = [2, 7]
     dks_step = 1
 
     # Minimum Cell Area Count (pixels)
-    minca = [50, 200]
-    minca_step = 25
+    minca = [5, 105]
+    minca_step = 10
 
     # Maximum Cell Area Count (pixels)
-    maxca = [850, 1000]
-    maxca_step = 25
+    maxca = [850, 1200]
+    maxca_step = 50
 
 
     watershed_var_ranges = {
-        'dt_percentile': np.arange(dtp[0], dtp[1]+1, dtp_step),
+        
+        'dt_percentile': np.arange(dtp[0], dtp[1]+dtp_step, dtp_step),
         'dilation_kernel_size': np.arange(dks[0], dks[1]+1, dks_step, dtype=np.uint8),
         'minimum_cell_area': np.arange(minca[0], minca[1]+1, minca_step),
         'maximum_cell_area': np.arange(maxca[0], maxca[1]+1, maxca_step)
@@ -290,17 +341,19 @@ if __name__ == "__main__":
 
     #tiff.imwrite('figures/MaskMaker_test1.tiff', masker.preproc, photometric='minisblack')
     test_segmenter = ControlSegmenter(image_fname= image_fname,
+                                      test_window=[(9000, 10000), (6000, 7000)],
                                       var_ranges= watershed_var_ranges,
-                                      controls= [90,
+                                      controls= [0.3,
                                                  5,
-                                                 100,
-                                                 900],
+                                                 20,
+                                                 1200
+                                                 ],
                                       #area_filter_jobn=4,
                                       channel_id=1
                                       )
     test_segmenter.export()
     #test_segmenter.save_tiff_slice()
     print(test_segmenter.var_seg_fulldf.info())
-    print(test_segmenter.var_seg_fulldf.head())
+    print(test_segmenter.var_seg_fulldf.head(20))
     #print(test_segmenter.var_seg_fulldf.shape)
     #print(len(test_segmenter.var_seg_fulldf.loc[0, 'contours']))
