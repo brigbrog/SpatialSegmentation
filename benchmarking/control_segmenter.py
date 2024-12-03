@@ -23,7 +23,7 @@ class ControlSegmenter():
     '''Performs controlled-variable watershed segmentation experiment on prerpocessed image.'''
     def __init__(self,
                  image_fname,
-                 test_window: list,
+                 test_window: list, # x (cols) then y (rows)
                  var_ranges: dict,
                  controls: list | None, # controls must be of length 4 -> [dtp, dks, minca, maxca] (even if not all are to be tested), or None
                  channel_id: int = 1, 
@@ -169,15 +169,15 @@ class ControlSegmenter():
         dtp,dks,minca,maxca = param_list
         self.preproc = self.preprocess(self.preproc_defaults[0], self.preproc_defaults[1], (dks, dks))
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dks,dks))
-        sure_bg = cv2.dilate(self.preproc, kernel, iterations=1)
+        sure_bg = cv2.dilate(self.preproc, kernel, iterations=3) # this needs to iterate more than once
         dist = cv2.distanceTransform(self.preproc, cv2.DIST_L2, 5)
-        _, sure_fg = cv2.threshold(dist, dtp * dist.max(), 255, cv2.THRESH_BINARY)
+        ret, sure_fg = cv2.threshold(dist, dtp * dist.max(), 255, cv2.THRESH_BINARY)
         sure_fg = sure_fg.astype(np.uint8)
         unknown = cv2.subtract(sure_bg, sure_fg)
         #smoothed_dt = gaussian_filter(dist, sigma=1)
         #threshold = np.percentile(smoothed_dt, dtp)
         #local_maxima = (smoothed_dt > threshold).astype(np.uint8)
-        _, markers = cv2.connectedComponents(sure_fg)
+        ret, markers = cv2.connectedComponents(sure_fg)
         markers += 1
         markers[unknown == 255] = 0
         markers = cv2.watershed(cv2.cvtColor(self.preproc, cv2.COLOR_GRAY2BGR), np.int32(markers))
