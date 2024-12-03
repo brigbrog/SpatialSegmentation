@@ -59,7 +59,7 @@ class Indicator:
             self.negative_indicators = self.get_neg_spec_df(neg_spec)
         elif not specify: 
             self.positive_indicators = self.find_pos_indicators_df()
-            self.negative_indicators = self.find_neg_indicators_df(self.n_neg)
+            self.negative_indicators = self.find_neg_indicators_df()
         self.indicators = self.create_full_indicator_df()
 
     def get_pos_spec_df(self, pos_spec):
@@ -87,6 +87,7 @@ class Indicator:
     def filter_indicators(self, 
                           cluster_df: pd.DataFrame = None,
                           indicator_type: str = 'min_count', #'min_count' or 'spec'
+                          division: bool = False, # If true stratifies neg indicators by cell type
                           ):
         assert indicator_type == 'min_count' or indicator_type == 'spec',\
             "indicator_type must either be 'min_count' or 'spec'."
@@ -94,7 +95,10 @@ class Indicator:
         if indicator_type == 'min_count':
             indicators = indicators.loc[indicators>= self.indicator_minimum]
         elif indicator_type == 'spec':
-            indicators = indicators.iloc[:self.n_neg]
+            if division:
+                indicators = indicators.iloc[:self.n_neg]
+            #elif division is None:
+                #indicators = indicators
         return indicators
     
     def find_pos_indicators_df(self):
@@ -120,7 +124,7 @@ class Indicator:
             pbar.update(1)
         return pos_indicators
     
-    def find_neg_indicators_df(self, n):
+    def find_neg_indicators_df(self):
         neg_indicators = pd.DataFrame(columns=['geneID', 'count', 'cluster', 'type'])
         with tqdm(total=len(self.negative_ids), desc="Finding negative indicators", unit="cluster") as pbar:
             for clust_id in self.negative_ids:
@@ -133,7 +137,8 @@ class Indicator:
                 temp_df['type'] = 'neg'
                 neg_indicators = pd.concat([neg_indicators, temp_df], ignore_index=True)
                 pbar.update(1)
-        return neg_indicators
+            neg_indicators = neg_indicators.sort_values(by='count', ascending=False)
+        return neg_indicators.iloc[:self.n_neg]
     
     def create_full_indicator_df(self):
         indicators_full_df = pd.concat([self.positive_indicators, self.negative_indicators], ignore_index=True)
@@ -165,6 +170,7 @@ class Comparator:
         self.rep_perc = rep_perc
         self.indicator_mask = None
         self.comparison_df = None
+        # add kd trees for x and y columns of origin for faster mask creation
         
         #self.testidx = self.set_testidx() 
         #self.thin()
@@ -187,26 +193,34 @@ class Comparator:
 # avoid np.where
 
     def create_indicator_mask(self,
-                              xrange: tuple = None,
-                              yrange: tuple = None,
+                              xrange: tuple = None, # second dimension of image file
+                              yrange: tuple = None, # first dimension of image file
                               indicators: dict = None #key is a string (geneID), value is 1 or -1 to show positive or negative inficator
                               ):
         # can pass positive, negative, or both dictionary as long as format is correct
-        mask = np.zeros(((xrange[1])-xrange[0], (yrange[1])-yrange[0]), dtype=np.int8)
+        # use KDTree eventually
+        #self.indicator_mask = None
+        mask = np.zeros((yrange[1]-yrange[0], xrange[1]-xrange[0]), dtype=np.int8)
         for indID, value in indicators.items():
             sub_origin = self.origin_csv.loc[self.origin_csv['geneID']==indID]
             grabs_inds = (
-                (xrange[0] < sub_origin['x']) & (sub_origin['x'] < xrange[1]) &
-                (yrange[0] < sub_origin['y']) & (sub_origin['y'] < yrange[1])
+                (xrange[0] <= sub_origin['x']) & (sub_origin['x'] < xrange[1]) &
+                (yrange[0] <= sub_origin['y']) & (sub_origin['y'] < yrange[1])
+                #(xrange[0] <= sub_origin['x']) & (sub_origin['x'] < xrange[1])
             )
             grabs = sub_origin.loc[grabs_inds]
-            #x_coords = (grabs['x'] - xrange[0]).astype(int).to_numpy()
-            #y_coords = (grabs['y'] - yrange[0]).astype(int).to_numpy()
-            x_coords = ((xrange[1] - grabs['x']).astype(int).to_numpy())
-            y_coords = ((yrange[1] - grabs['y']).astype(int).to_numpy())
+            x_coords = (grabs['x'] - xrange[0]).astype(int).to_numpy()
+            y_coords = (grabs['y'] - yrange[0]).astype(int).to_numpy()
+
+            #x_coords = grabs['x'].astype(int).to_numpy()
+            #y_coords = grabs['y'].astype(int).to_numpy()
+
+            #x_coords = ((xrange[1] - grabs['x']).astype(int).to_numpy())
+            #y_coords = ((yrange[1] - grabs['y']).astype(int).to_numpy())
             mask[y_coords, x_coords] = value
-        self.indicator_mask = mask
-        return mask
+        self.indicator_mask = mask.T
+        return self.indicator_mask
+    
     
 
     def compare_engine(self,
