@@ -63,10 +63,12 @@ class Indicator:
         self.indicators = self.create_full_indicator_df()
 
     def get_pos_spec_df(self, pos_spec):
+        # returns positive indicator dataframe givin list of geneID strings, sets all types to "pos"
         pos_spec_df = pd.DataFrame({"geneID": pos_spec, "type": "pos"})
         return pos_spec_df
 
     def get_neg_spec_df(self, neg_spec):
+        # returns positive indicator dataframe givin list of geneID strings, sets all types to "pos"
         neg_spec_df = pd.DataFrame({"geneID": neg_spec, "type": "pos"})
         return neg_spec_df
 
@@ -149,13 +151,57 @@ class Indicator:
         temp = indicators[['geneID', 'type']]
         indicator_dict = {row["geneID"]: 1 if row["type"] == "pos" else -1 for _, row in temp.iterrows()}
         return indicator_dict
+    
+class RandomGrabIndicator(Indicator):
+    def __init__(self,
+                 origin_csv: pd.DataFrame,
+                 annotation: pd.DataFrame,
+                 x_win: tuple, # first dimension (cols)
+                 y_win: tuple, # second dimension (rows)
+                 ):
+        super().__init__(origin_csv, annotation)
+        self.x_win = x_win
+        self.y_win = y_win
+        window = (
+                (y_win[0] <= origin_csv['x']) & (origin_csv['x'] < y_win[1]) &
+                (x_win[0] <= origin_csv['y']) & (origin_csv['y'] < x_win[1])
+            )
+        print('number of datapoints in window: ', len(window))
+
+        self.most_common_IDs = {
+            'NEURON': ['SNAP25', 'PRNP', 'UCHL1', 'TUBB2A', 'NRGN', 'CALM1', 'IDS', 'NEFL', 'VSNL1', 'RTN1', 'THY1', 'ENC1'],
+            'ASCTROCYTE': ['CLU', 'SLC1A2', 'MT3', 'AQP4', 'SPARCL1', 'ATP1A2', 'GJA1', 'CPE', 'CST3', 'GLUL', 'SLC1A3', 'MT2A'],
+            'OLIGODENDROCYTE': ['PLP1', 'CRYAB', 'SCD', 'CNP', 'QDPR', 'TF', 'MOBP', 'CLDND1', 'SEPTIN4', 'SELENOP', 'MAG', 'CLDN11'],
+            'MICROGLIA': ['NLRP1', 'RPS19', 'CTSB', 'CD74', 'FCGBP', 'C3', 'LAPTM5', 'TSPO', 'HLA-DRA', 'C1QA', 'CSF1R', 'BOLA2B'],
+            'VASCULATURE': ['CLDN5', 'SLC7A5', 'EGFL7', 'IFITM3', 'VWF', 'FLT1', 'SLC2A1', 'ETS2', 'ITM2A', 'SLC2A3', 'PODXL', 'SLC16A1']
+        }
+        
+        self.non_neuron_IDs = [
+            gene for key, values in self.most_common_IDs.items() 
+            if key != 'NUERON' 
+            for gene in values
+        ]
+
+        self.origin_window = origin_csv.loc[window]
+        self.pos_win_df = self.pos_window_df()
+        self.neg_win_df = self.neg_window_df()
+    
+    def pos_window_df(self):
+        pos_origin_window = self.origin_window[self.origin_window['geneID'].isin(self.most_common_IDs['NEURON'])]
+        return pos_origin_window
+
+    def neg_window_df(self):
+        neg_origin_window = self.origin_window[self.origin_window['geneID'].isin(self.non_neuron_IDs)]
+        return neg_origin_window
+    
+
 
 class Comparator:
     def __init__(self, 
                  metadata: pd.DataFrame,
                  markers: pd.Series,
                  contours: pd.Series,
-                 indicator: Indicator = None,
+                 indicator, #Indicator = None,
                  rep_perc: float = 1.0,
                  ):
         self.parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -221,7 +267,40 @@ class Comparator:
         self.indicator_mask = mask
         return self.indicator_mask
     
+    def create_indicator_mask_rand(self,
+                                   xrange: tuple, # first dimension of image file (cols)
+                                   yrange: tuple, # second dimension of image file (rows)
+                                   pos_window_df: pd.DataFrame,
+                                   neg_window_df: pd.DataFrame,
+                                   density: float = 1.0 # between 0 and 1
+                                   ):
+        pos_window_df = pos_window_df.reset_index()
+        neg_window_df = neg_window_df.reset_index()
+        mask = np.zeros((yrange[1]-yrange[0], xrange[1]-xrange[0]), dtype=np.int8)
+        n = int(density*min(len(pos_window_df), len(neg_window_df)))
+        pos_inds = np.random.randint(0, len(pos_window_df), n)
+        neg_inds = np.random.randint(0, len(neg_window_df), n)
+        pos_grabs = pos_window_df.loc[pos_inds]
+        neg_grabs = neg_window_df.loc[neg_inds]
+        pos_y_coords = (pos_grabs['x'] - yrange[0]).astype(int).to_numpy()
+        pos_x_coords = (pos_grabs['y'] - xrange[0]).astype(int).to_numpy()
+        neg_y_coords = (neg_grabs['x'] - yrange[0]).astype(int).to_numpy()
+        neg_x_coords = (neg_grabs['y'] - xrange[0]).astype(int).to_numpy()
+
+        mask[pos_y_coords, pos_x_coords] = 1
+        mask[neg_y_coords, neg_x_coords] = -1
+
+        self.indicator_mask = mask
+        #print(len(pos_y_coords))
+        #print(len(pos_x_coords))
+        return self.indicator_mask
+
+            
+        
     
+
+    # shit box
+    ####################
     def create_indicator_mask_old(self,
                                 xrange: tuple = None,  # First dimension of image file (rows)
                                 yrange: tuple = None,  # Second dimension of image file (columns)
@@ -273,17 +352,22 @@ class Comparator:
 
         self.indicator = mask.T
         return self.indicator_mask
-
+    ####################
 
     def compare_engine(self,
-                       xrange, # first dimension (cols)
-                       yrange, # second dimension (rows)
-                       indicators):
+                       #xrange, # first dimension (cols)
+                       #yrange, # second dimension (rows)
+                       indicator_mask
+                       ):
+                       #method: str = 'rand'):
         res = pd.DataFrame(columns=['test_paramID', 'mark', 'total', 'n_true_pos', 'n_false_neg'])
-        self.create_indicator_mask_ex(xrange, yrange, self.indicator.create_indicator_dict(indicators))
+        #if method == 'ex':
+            #self.create_indicator_mask_ex(xrange, yrange, self.indicator.create_indicator_dict(indicators))
+        #elif method == 'rand':
+        #self.indicator_mask_rand(xrange, yrange,)
         for i, marker_arr in enumerate(self.markers):
             test_paramID = self.metadata.loc[i, 'test_paramID']
-            res = pd.concat([res, self.run_comp_series(self.indicator_mask, marker_arr, test_paramID)], ignore_index=True)
+            res = pd.concat([res, self.run_comp_series(indicator_mask, marker_arr, test_paramID)], ignore_index=True)
         return res
 
     def run_comp_series(self,
@@ -307,12 +391,13 @@ class Comparator:
                      'total': total,
                      'n_true_pos': tp,
                      'n_false_neg': fn}
+            #res = pd.concat([res, toAdd])
             res.loc[len(res)] = toAdd
         return res
             
 
     def count_marker_and_indicators(self,
-                                    ind_mask,
+                                    indicator_mask,
                                     marker_array,
                                     target
                                     ):
@@ -323,8 +408,8 @@ class Comparator:
         mask = marker_array == target
         total_count = np.sum(mask)
         #print('total count: ', total_count)
-        positive_count = np.sum(ind_mask[mask] == 1)
-        negative_count = np.sum(ind_mask[mask] == -1)
+        positive_count = np.sum(indicator_mask[mask] == 1)
+        negative_count = np.sum(indicator_mask[mask] == -1)
         return total_count, positive_count, negative_count
 
         
