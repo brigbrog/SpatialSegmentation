@@ -222,7 +222,7 @@ class Comparator:
         return self.indicator_mask
     
     
-    def create_indicator_mask(self,
+    def create_indicator_mask_old(self,
                                 xrange: tuple = None,  # First dimension of image file (rows)
                                 yrange: tuple = None,  # Second dimension of image file (columns)
                                 indicators: dict = None  # key: geneID, value: 1 or -1
@@ -276,11 +276,11 @@ class Comparator:
 
 
     def compare_engine(self,
-                       xrange,
-                       yrange, 
+                       xrange, # first dimension (cols)
+                       yrange, # second dimension (rows)
                        indicators):
         res = pd.DataFrame(columns=['test_paramID', 'mark', 'total', 'n_true_pos', 'n_false_neg'])
-        self.create_indicator_mask(xrange, yrange, self.indicator.create_indicator_dict(indicators))
+        self.create_indicator_mask_ex(xrange, yrange, self.indicator.create_indicator_dict(indicators))
         for i, marker_arr in enumerate(self.markers):
             test_paramID = self.metadata.loc[i, 'test_paramID']
             res = pd.concat([res, self.run_comp_series(self.indicator_mask, marker_arr, test_paramID)], ignore_index=True)
@@ -316,8 +316,8 @@ class Comparator:
                                     marker_array,
                                     target
                                     ):
-        #print(ind_mask.shape)
-        #print(marker_array.shape)
+        #print("indicator mask shape: ", ind_mask.shape)
+        #print("marker array shape: ", marker_array.shape)
         #assert ind_mask.shape == marker_array.shape,\
         #"problemo"
         mask = marker_array == target
