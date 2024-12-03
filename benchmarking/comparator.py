@@ -192,7 +192,7 @@ class Comparator:
 # ## best way to do it is make a mask for the indicators to subtract from markers array
 # avoid np.where
 
-    def create_indicator_mask(self,
+    def create_indicator_mask_ex(self,
                               xrange: tuple = None, # second dimension of image file
                               yrange: tuple = None, # first dimension of image file
                               indicators: dict = None #key is a string (geneID), value is 1 or -1 to show positive or negative inficator
@@ -222,6 +222,36 @@ class Comparator:
         return self.indicator_mask
     
     
+    def create_indicator_mask(self,
+                                xrange: tuple = None,  # First dimension of image file (rows)
+                                yrange: tuple = None,  # Second dimension of image file (columns)
+                                indicators: dict = None  # key: geneID, value: 1 or -1
+                                ):
+        # Initialize the mask with shape (rows, columns)
+        mask = np.zeros((xrange[1] - xrange[0], yrange[1] - yrange[0]), dtype=np.int8)
+
+        for indID, value in indicators.items():
+            # Filter data for the given geneID
+            sub_origin = self.origin_csv.loc[self.origin_csv['geneID'] == indID]
+
+            # Find data points within the specified ranges
+            grabs_inds = (
+                (xrange[0] <= sub_origin['y']) & (sub_origin['y'] < xrange[1]) &  # Check row range
+                (yrange[0] <= sub_origin['x']) & (sub_origin['x'] < yrange[1])   # Check column range
+            )
+            grabs = sub_origin.loc[grabs_inds]
+
+            # Calculate coordinates relative to the given window
+            x_coords = (grabs['y'] - xrange[0]).astype(int).to_numpy()  # Use 'y' for rows
+            y_coords = (grabs['x'] - yrange[0]).astype(int).to_numpy()  # Use 'x' for columns
+
+            # Assign indicator value to the mask
+            mask[x_coords, y_coords] = value
+
+        # No transpose is needed since the ranges now directly align with the dimensions
+        self.indicator_mask = mask.T
+        return self.indicator_mask
+
 
     def compare_engine(self,
                        xrange,
