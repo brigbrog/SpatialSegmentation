@@ -1,37 +1,70 @@
 import numpy as np
 import pandas as pd
-import seaborn as sb
-import tifffile as tiff
-import matplotlib.pyplot as plt
-import cv2
-from multiprocessing import Pool, cpu_count
-import sys
-import progressbar
-import requests 
-import time
 import os
-import fastparquet
 from tqdm import tqdm
-import json
-from scipy.spatial import KDTree
-
 from manager import DataManager
 
-import gc
-from joblib import Parallel, delayed
+class RandomGrabIndicator:
+    def __init__(self,
+                 origin_csv: pd.DataFrame,
+                 x_win: tuple, # first dimension (cols)
+                 y_win: tuple, # second dimension (rows)
+                 equalize: bool = True
+                 ):
+        '''Constructor for RandomGrabIndicator. Organizes origin data and window for analysis.
+        Params:
+            origin_csv: (pandas.DataFrame) The dataframe to which the origin data is stored.
+            x_win: (tuple) The first dimension of the image slice for analysis, the columns of the image array.
+            y_win: (tuple) The second dimension of the image slice for analysis, the rows of the image array.
+            equalize: (bool) boolean controlling the equalization of postive and negative indicator dataframes. 
+                      If True, both are equalized to the minimum length. Default is True.'''
+        
+        self.origin_csv = origin_csv
+        self.x_win = x_win
+        self.y_win = y_win
+        window = (
+                (y_win[0] <= origin_csv['x']) & (origin_csv['x'] < y_win[1]) &
+                (x_win[0] <= origin_csv['y']) & (origin_csv['y'] < x_win[1])
+            )
+        self.most_common_IDs = {
+            'NEURON': ['MT-RNR2','SNAP25', 'PRNP', 'UCHL1', 'TUBB2A', 'NRGN', 'CALM1', 'IDS', 'NEFL', 'VSNL1', 'RTN1', 'THY1', 'ENC1', 'MT-CO2', 'MT-TV', 'MT-CO3', 'MT-ND1'],
+            'ASCTROCYTE': ['CLU', 'SLC1A2', 'MT3', 'AQP4', 'SPARCL1', 'ATP1A2', 'GJA1', 'CPE', 'CST3', 'GLUL', 'SLC1A3', 'MT2A'],
+            'OLIGODENDROCYTE': ['PLP1', 'CRYAB', 'SCD', 'CNP', 'QDPR', 'TF', 'MOBP', 'CLDND1', 'SEPTIN4', 'SELENOP', 'MAG', 'CLDN11'],
+            'MICROGLIA': ['NLRP1', 'RPS19', 'CTSB', 'CD74', 'FCGBP', 'C3', 'LAPTM5', 'TSPO', 'HLA-DRA', 'C1QA', 'CSF1R', 'BOLA2B'],
+            'VASCULATURE': ['CLDN5', 'SLC7A5', 'EGFL7', 'IFITM3', 'VWF', 'FLT1', 'SLC2A1', 'ETS2', 'ITM2A', 'SLC2A3', 'PODXL', 'SLC16A1']
+        }
+        self.non_neuron_IDs = self.most_common_IDs['ASCTROCYTE'] + self.most_common_IDs['OLIGODENDROCYTE'] + self.most_common_IDs['MICROGLIA'] + self.most_common_IDs['VASCULATURE']
+        self.origin_window = origin_csv.loc[window]
+        self.pos_win_df = self.pos_window_df()
+        self.neg_win_df = self.neg_window_df()
+        chop = np.min((len(self.pos_win_df), len(self.neg_win_df)))
+        if equalize:
+            self.pos_win_df = self.pos_win_df.sample(frac=1).reset_index(drop=True).loc[:chop]
+            self.neg_win_df = self.neg_win_df.sample(frac=1).reset_index(drop=True).loc[:chop]
+    
+    def pos_window_df(self):
+        '''Generator method for postive window gene indicator DataFrame. Pulls all instances in origin data from Neuron 
+        indicator list within object analysis window.
+        Params:
+            None
+        Returns: 
+            pos_origin_window: (pandas.DataFrame) The postive indicators with x, y coordinates within object window.
+        '''
+    
+        pos_origin_window = self.origin_window[self.origin_window['geneID'].isin(self.most_common_IDs['NEURON'])]
+        return pos_origin_window
 
-# git ignore for input output dir DONE
-# need to find how to get indicator lists DONE
-# FIX MARKERS and CONTOURS importers, they are fucked up
-    #contours DONE
-    #markers DONE
-# Make testidx and thinner before pos/neg masks
-# Use the DataManager
-# create pos/neg masks for quick comparison to origin
-    # Only have cell specific true pos false neg, false pos and true neg are rates bc no cell assignment
-    # create numpy mask for each contour and pull positive coords or find better way...
-    # use indicatorFinder object (maybe attribute ?) DONE
-    # remember representative percentage
+    def neg_window_df(self):
+        '''Generator method for negative window gene indicator DataFrame. Pulls all instances in origin data from non Neuron 
+        indicator list within object analysis window.
+        Params:
+            None
+        Returns: 
+            neg_origin_window: (pandas.DataFrame) The negative indicators with x, y coordinates within object window.
+        '''
+    
+        neg_origin_window = self.origin_window[self.origin_window['geneID'].isin(self.non_neuron_IDs)]
+        return neg_origin_window
 
 class Indicator:
     def __init__(self,
@@ -49,7 +82,6 @@ class Indicator:
         self.annotation = annotation
         self.indicator_minimum = indicator_minimum
         self.n_neg = n_neg
-        # currently number of each cluster, maybe change to total ?
         self.positive_id = positive_id
         self.negative_ids = negative_ids
         if specify:
@@ -63,17 +95,33 @@ class Indicator:
         self.indicators = self.create_full_indicator_df()
 
     def get_pos_spec_df(self, pos_spec):
-        # returns positive indicator dataframe givin list of geneID strings, sets all types to "pos"
+        '''Generates a DataFrame of positive indicators from a given list of gene IDs.
+        Params:
+            pos_spec: (list) List of gene IDs to classify as positive indicators.
+        Returns:
+            pos_spec_df: (pandas.DataFrame) DataFrame with gene IDs and their classification as positive.
+        '''
         pos_spec_df = pd.DataFrame({"geneID": pos_spec, "type": "pos"})
         return pos_spec_df
 
     def get_neg_spec_df(self, neg_spec):
-        # returns positive indicator dataframe givin list of geneID strings, sets all types to "pos"
+        '''Generates a DataFrame of negative indicators from a given list of gene IDs.
+        Params:
+            neg_spec: (list) List of gene IDs to classify as negative indicators.
+        Returns:
+            neg_spec_df: (pandas.DataFrame) DataFrame with gene IDs and their classification as negative.
+        '''
         neg_spec_df = pd.DataFrame({"geneID": neg_spec, "type": "pos"})
         return neg_spec_df
 
     def get_gene_set(self,
                       id: int = None):
+        '''Filtres annotated dataframe for specified cluster id and returns genes as a set.
+        Params:
+            id: (int) Cluster index for desired gene set. 
+        Returns:
+            clust_genes: (set) Set of gene names from annotation dataframe reference for specified cluster id.'''
+        
         assert id is not None, \
             "Cluster ID must be provided to pull indicators."
         clust = self.annotation.loc[self.annotation['cluster']==id, :]
@@ -83,27 +131,42 @@ class Indicator:
     def create_cluster_df(self,
                           gene_set: pd.Series = None
                           ):
+        '''Returns pandas.DataFrame for specified gene name set. Pulled from origin data.
+        Params:
+            gene_set: set of gene generated by get_gene_set for specified cluster id.
+        Returns: 
+            cluster_df: instances pulled from origin data for specified set of genes.'''
+        
         cluster_df = self.origin_csv[self.origin_csv['geneID'].isin(gene_set)]
         return cluster_df
         
     def filter_indicators(self, 
                           cluster_df: pd.DataFrame = None,
-                          indicator_type: str = 'min_count', #'min_count' or 'spec'
-                          division: bool = False, # If true stratifies neg indicators by cell type
+                          indicator_type: str = 'min_count'
                           ):
+        '''Filters cluster dataframe (returned from create_cluster_df) by count minimum or for first n instances.
+        Params:
+            cluster_df: (pd.DataFrame) cluster dataframe to be filtered.
+            indicator_type: (str) filtering method applied to indicators. "min_count" for minimum count and "spec" for top n instances.
+        Returns:
+            indicators: (pd.DataFrame) filtered dataframe of indicator instances drawn from cluster_df.'''
+        
         assert indicator_type == 'min_count' or indicator_type == 'spec',\
             "indicator_type must either be 'min_count' or 'spec'."
         indicators = cluster_df['geneID'].value_counts()
         if indicator_type == 'min_count':
             indicators = indicators.loc[indicators>= self.indicator_minimum]
         elif indicator_type == 'spec':
-            if division:
-                indicators = indicators.iloc[:self.n_neg]
-            #elif division is None:
-                #indicators = indicators
+            indicators = indicators.iloc[:self.n_neg]
         return indicators
     
     def find_pos_indicators_df(self):
+        '''Verbosely retrieves genes associated with the positive cluster, processes to cluster-level DataFrame, applies filtering criteria to find positive indicator genes.
+        Params:
+            None
+        Returns:
+            pos_inds: (pd.DataFrame) A DataFrame with columns ['geneID', 'count', 'cluster', 'type']
+            containing the positive indicator genes.'''
         with tqdm(total=3, desc="Finding positive indicators", unit="step") as pbar:
             pos_genes = self.get_gene_set(self.positive_id)
             pbar.update(1)
@@ -117,6 +180,11 @@ class Indicator:
         return pos_inds
     
     def find_pos_indicators_series(self):
+        '''Verbosely retrieves genes associated with the positive cluster, processes to cluster-level Series, applies filtering criteria to find positive indicator genes.
+        Params:
+            None
+        Returns:
+            pos_indicators: (pd.Series) Containing the positive indicator genes.'''
         with tqdm(total=3, desc="Finding positive indicators", unit="step") as pbar:
             pos_genes = self.get_gene_set(self.positive_id)
             pbar.update(1)
@@ -127,12 +195,18 @@ class Indicator:
         return pos_indicators
     
     def find_neg_indicators_df(self):
+        '''Verbosely retrieves genes associated with the negative cluster, processes to cluster-level DataFrame, applies filtering criteria to find negative indicator genes.
+        Params:
+            None
+        Returns:
+            (pd.DataFrame) A DataFrame with columns ['geneID', 'count', 'cluster', 'type']
+            containing the negative indicator genes.'''
         neg_indicators = pd.DataFrame(columns=['geneID', 'count', 'cluster', 'type'])
         with tqdm(total=len(self.negative_ids), desc="Finding negative indicators", unit="cluster") as pbar:
             for clust_id in self.negative_ids:
                 clust_genes = self.get_gene_set(clust_id)
                 cluster_df = self.create_cluster_df(clust_genes)
-                cluster_indicators = self.filter_indicators(cluster_df, 'spec')
+                cluster_indicators = self.filter_indicators(cluster_df, 'spec')#, division=True)
                 temp_df = cluster_indicators.reset_index()
                 temp_df.columns = ['geneID', 'count']
                 temp_df['cluster'] = clust_id
@@ -143,59 +217,22 @@ class Indicator:
         return neg_indicators.iloc[:self.n_neg]
     
     def create_full_indicator_df(self):
+        '''Concatenates saved postive and negative cluster dataframes. Returns concatenation.'''
         indicators_full_df = pd.concat([self.positive_indicators, self.negative_indicators], ignore_index=True)
         return indicators_full_df.sort_values(by='count', ascending=False)
     
     def create_indicator_dict(self,
                               indicators: pd.DataFrame):
+        '''Creates a dictionary mapping gene IDs to their indicator type (positive or negative).
+        Params:
+            indicators: (pandas.DataFrame) DataFrame containing gene IDs and their types ('pos' or 'neg').
+        Returns:
+            indicator_dict: (dict) Dictionary mapping each gene ID to 1 (positive) or -1 (negative).
+        '''
         temp = indicators[['geneID', 'type']]
         indicator_dict = {row["geneID"]: 1 if row["type"] == "pos" else -1 for _, row in temp.iterrows()}
         return indicator_dict
     
-class RandomGrabIndicator(Indicator):
-    def __init__(self,
-                 origin_csv: pd.DataFrame,
-                 annotation: pd.DataFrame,
-                 x_win: tuple, # first dimension (cols)
-                 y_win: tuple, # second dimension (rows)
-                 ):
-        super().__init__(origin_csv, annotation)
-        self.x_win = x_win
-        self.y_win = y_win
-        window = (
-                (y_win[0] <= origin_csv['x']) & (origin_csv['x'] < y_win[1]) &
-                (x_win[0] <= origin_csv['y']) & (origin_csv['y'] < x_win[1])
-            )
-        print('number of datapoints in window: ', len(window))
-
-        self.most_common_IDs = {
-            'NEURON': ['SNAP25', 'PRNP', 'UCHL1', 'TUBB2A', 'NRGN', 'CALM1', 'IDS', 'NEFL', 'VSNL1', 'RTN1', 'THY1', 'ENC1'],
-            'ASCTROCYTE': ['CLU', 'SLC1A2', 'MT3', 'AQP4', 'SPARCL1', 'ATP1A2', 'GJA1', 'CPE', 'CST3', 'GLUL', 'SLC1A3', 'MT2A'],
-            'OLIGODENDROCYTE': ['PLP1', 'CRYAB', 'SCD', 'CNP', 'QDPR', 'TF', 'MOBP', 'CLDND1', 'SEPTIN4', 'SELENOP', 'MAG', 'CLDN11'],
-            'MICROGLIA': ['NLRP1', 'RPS19', 'CTSB', 'CD74', 'FCGBP', 'C3', 'LAPTM5', 'TSPO', 'HLA-DRA', 'C1QA', 'CSF1R', 'BOLA2B'],
-            'VASCULATURE': ['CLDN5', 'SLC7A5', 'EGFL7', 'IFITM3', 'VWF', 'FLT1', 'SLC2A1', 'ETS2', 'ITM2A', 'SLC2A3', 'PODXL', 'SLC16A1']
-        }
-        
-        self.non_neuron_IDs = [
-            gene for key, values in self.most_common_IDs.items() 
-            if key != 'NUERON' 
-            for gene in values
-        ]
-
-        self.origin_window = origin_csv.loc[window]
-        self.pos_win_df = self.pos_window_df()
-        self.neg_win_df = self.neg_window_df()
-    
-    def pos_window_df(self):
-        pos_origin_window = self.origin_window[self.origin_window['geneID'].isin(self.most_common_IDs['NEURON'])]
-        return pos_origin_window
-
-    def neg_window_df(self):
-        neg_origin_window = self.origin_window[self.origin_window['geneID'].isin(self.non_neuron_IDs)]
-        return neg_origin_window
-    
-
-
 class Comparator:
     def __init__(self, 
                  metadata: pd.DataFrame,
@@ -216,53 +253,31 @@ class Comparator:
         self.rep_perc = rep_perc
         self.indicator_mask = None
         self.comparison_df = None
-        # add kd trees for x and y columns of origin for faster mask creation
-        
-        #self.testidx = self.set_testidx() 
-        #self.thin()
-
-    def set_testidx(self):
-        # wrong, should not be slicing metadata, only markers/contours 1 level down
-        test_length = int(np.ceil(len(self.metadata) * self.rep_perc))
-        ids = np.sort(np.random.choice(len(self.metadata), test_length, replace=False))
-        return ids
-    
-    def thin(self):
-        # wrong, should not be slicing metadata, only markers/contours 1 level down
-        self.metadata = self.metadata.iloc[self.testidx]
-        self.contours = self.contours.iloc[self.testidx]
-        self.markers = self.markers.iloc[self.testidx]
-
-    
-## USE MARKERS FOR COMPARISON 
-# ## best way to do it is make a mask for the indicators to subtract from markers array
-# avoid np.where
 
     def create_indicator_mask_ex(self,
                                  xrange: tuple = None, # first dimension of image file (cols)
                                  yrange: tuple = None, # second dimension of image file (rows)
-                                 indicators: dict = None #key is a string (geneID), value is 1 or -1 to show positive or negative inficator
+                                 indicators: dict = None #key is a string (geneID), value is 1 or -1 to show positive or negative indicator
                                  ):
-        # can pass positive, negative, or both dictionary as long as format is correct
-        # use KDTree eventually
-        #self.indicator_mask = None
+        '''Generates a mask array based on indicator gene IDs for a specified region of the image.
+        Params:
+            xrange: (tuple) Range of columns (x-dimension) in the image.
+            yrange: (tuple) Range of rows (y-dimension) in the image.
+            indicators: (dict) Dictionary mapping gene IDs to 1 (positive) or -1 (negative).
+        Returns:
+            mask: (numpy.ndarray) Mask array with values 1 (positive), -1 (negative), or 0 (no indicator).
+        '''
+        ## Suggest implementing KDTree or other more efficient point searching algorithm
         mask = np.zeros((yrange[1]-yrange[0], xrange[1]-xrange[0]), dtype=np.int8)
         for indID, value in indicators.items():
             sub_origin = self.origin_csv.loc[self.origin_csv['geneID']==indID]
             grabs_inds = (
                 (yrange[0] <= sub_origin['x']) & (sub_origin['x'] < yrange[1]) &
                 (xrange[0] <= sub_origin['y']) & (sub_origin['y'] < xrange[1])
-                #(xrange[0] <= sub_origin['x']) & (sub_origin['x'] < xrange[1])
             )
             grabs = sub_origin.loc[grabs_inds]
             y_coords = (grabs['x'] - yrange[0]).astype(int).to_numpy()
             x_coords = (grabs['y'] - xrange[0]).astype(int).to_numpy()
-
-            #x_coords = grabs['x'].astype(int).to_numpy()
-            #y_coords = grabs['y'].astype(int).to_numpy()
-
-            #x_coords = ((xrange[1] - grabs['x']).astype(int).to_numpy())
-            #y_coords = ((yrange[1] - grabs['y']).astype(int).to_numpy())
             mask[y_coords, x_coords] = value
         self.indicator_mask = mask
         return self.indicator_mask
@@ -274,6 +289,16 @@ class Comparator:
                                    neg_window_df: pd.DataFrame,
                                    density: float = 1.0 # between 0 and 1
                                    ):
+        '''Generates a randomized mask array based on positive and negative indicators within a region.
+        Params:
+            xrange: (tuple) Range of columns (x-dimension) in the image.
+            yrange: (tuple) Range of rows (y-dimension) in the image.
+            pos_window_df: (pandas.DataFrame) DataFrame containing positive indicator coordinates.
+            neg_window_df: (pandas.DataFrame) DataFrame containing negative indicator coordinates.
+            density: (float) Fraction of available indicators to include in the mask, between 0 and 1.
+        Returns:
+            mask: (numpy.ndarray) Mask array with randomized positive and negative indicators.
+        '''
         pos_window_df = pos_window_df.reset_index()
         neg_window_df = neg_window_df.reset_index()
         mask = np.zeros((yrange[1]-yrange[0], xrange[1]-xrange[0]), dtype=np.int8)
@@ -291,97 +316,39 @@ class Comparator:
         mask[neg_y_coords, neg_x_coords] = -1
 
         self.indicator_mask = mask
-        #print(len(pos_y_coords))
-        #print(len(pos_x_coords))
         return self.indicator_mask
-
-            
-        
-    
-
-    # shit box
-    ####################
-    def create_indicator_mask_old(self,
-                                xrange: tuple = None,  # First dimension of image file (rows)
-                                yrange: tuple = None,  # Second dimension of image file (columns)
-                                indicators: dict = None  # key: geneID, value: 1 or -1
-                                ):
-        # Initialize the mask with shape (rows, columns)
-        mask = np.zeros((xrange[1] - xrange[0], yrange[1] - yrange[0]), dtype=np.int8)
-
-        for indID, value in indicators.items():
-            # Filter data for the given geneID
-            sub_origin = self.origin_csv.loc[self.origin_csv['geneID'] == indID]
-
-            # Find data points within the specified ranges
-            grabs_inds = (
-                (xrange[0] <= sub_origin['y']) & (sub_origin['y'] < xrange[1]) &  # Check row range
-                (yrange[0] <= sub_origin['x']) & (sub_origin['x'] < yrange[1])   # Check column range
-            )
-            grabs = sub_origin.loc[grabs_inds]
-
-            # Calculate coordinates relative to the given window
-            x_coords = (grabs['y'] - xrange[0]).astype(int).to_numpy()  # Use 'y' for rows
-            y_coords = (grabs['x'] - yrange[0]).astype(int).to_numpy()  # Use 'x' for columns
-
-            # Assign indicator value to the mask
-            mask[x_coords, y_coords] = value
-
-        # No transpose is needed since the ranges now directly align with the dimensions
-        self.indicator_mask = mask.T
-        return self.indicator_mask
-    
-    def window_indicator_mask(self,
-                              full_shape: tuple,
-                              xrange: tuple,
-                              yrange: tuple,
-                              indicators: dict
-                              ):
-        mask = np.zeros(full_shape, dtype = np.int8)
-
-        for indID, value in indicators.items():
-            sub_origin = self.origin_csv.loc[self.origin_csv['geneID'] == indID]
-            grabs_inds = (
-                (xrange[0] <= sub_origin['y']) & (sub_origin['y'] < xrange[1]) &  # Check row range
-                (yrange[0] <= sub_origin['x']) & (sub_origin['x'] < yrange[1])   # Check column range
-            )
-            grabs = sub_origin.loc[grabs_inds]
-            y_coords = (grabs['y']).astype(int).to_numpy()  # Use 'y' for rows
-            x_coords = (grabs['x']).astype(int).to_numpy()  # Use 'x' for columns
-            mask[y_coords, x_coords] = value
-
-        self.indicator = mask.T
-        return self.indicator_mask
-    ####################
 
     def compare_engine(self,
-                       #xrange, # first dimension (cols)
-                       #yrange, # second dimension (rows)
-                       indicator_mask
+                       indicator_mask: np.ndarray
                        ):
-                       #method: str = 'rand'):
+        '''Compares an indicator mask to marker arrays and generates a summary DataFrame.
+        Params:
+            indicator_mask: (numpy.ndarray) Mask array with positive and negative indicators.
+        Returns:
+            comparison_df: (pandas.DataFrame) DataFrame summarizing comparison results for each marker.
+        '''
         res = pd.DataFrame(columns=['test_paramID', 'mark', 'total', 'n_true_pos', 'n_false_neg'])
-        #if method == 'ex':
-            #self.create_indicator_mask_ex(xrange, yrange, self.indicator.create_indicator_dict(indicators))
-        #elif method == 'rand':
-        #self.indicator_mask_rand(xrange, yrange,)
         for i, marker_arr in enumerate(self.markers):
             test_paramID = self.metadata.loc[i, 'test_paramID']
             res = pd.concat([res, self.run_comp_series(indicator_mask, marker_arr, test_paramID)], ignore_index=True)
-        return res
+        self.comparison_df = res
+        return self.comparison_df
 
     def run_comp_series(self,
                         ind_mask: np.ndarray,
                         marker_array: np.ndarray,
                         test_paramID: str
                         ):
+        '''Processes a single marker array to compare against the indicator mask.
+        Params:
+            ind_mask: (numpy.ndarray) Mask array with positive and negative indicators.
+            marker_array: (numpy.ndarray) Array containing marker regions.
+            test_paramID: (str) Identifier for the test parameters being analyzed.
+        Returns:
+            res: (pandas.DataFrame) DataFrame summarizing counts of true positives and false negatives.
+        '''
         res = pd.DataFrame(columns=['test_paramID', 'mark', 'total', 'n_true_pos', 'n_false_neg'])
         targets = np.unique(marker_array)[1:]
-        ## FIX THIS LATER - INVOLVES REP PERC
-        #test_len = int(np.ceil(len(targets) * self.rep_perc))
-        #test_len = min(test_len, len(targets))
-        #test_idx = np.sort(np.random.choice(len(self.metadata), test_len, replace=False))
-        #targets = targets[test_idx]
         for target in targets:
             total, tp, fn = self.count_marker_and_indicators(ind_mask,
                                                              marker_array,
@@ -391,41 +358,54 @@ class Comparator:
                      'total': total,
                      'n_true_pos': tp,
                      'n_false_neg': fn}
-            #res = pd.concat([res, toAdd])
             res.loc[len(res)] = toAdd
         return res
             
-
     def count_marker_and_indicators(self,
-                                    indicator_mask,
-                                    marker_array,
-                                    target
+                                    indicator_mask: np.ndarray,
+                                    marker_array: np.ndarray,
+                                    target: int
                                     ):
-        #print("indicator mask shape: ", ind_mask.shape)
-        #print("marker array shape: ", marker_array.shape)
-        #assert ind_mask.shape == marker_array.shape,\
-        #"problemo"
+        '''Counts total markers, true positives, and false negatives for a given target.
+        Params:
+            indicator_mask: (numpy.ndarray) Mask array with positive and negative indicators.
+            marker_array: (numpy.ndarray) Array containing marker regions.
+            target: (int) Marker value to analyze.
+        Returns:
+            total_count: (int) Total number of markers of the given target.
+            positive_count: (int) Number of true positive markers.
+            negative_count: (int) Number of false negative markers.
+        '''
         mask = marker_array == target
         total_count = np.sum(mask)
-        #print('total count: ', total_count)
         positive_count = np.sum(indicator_mask[mask] == 1)
         negative_count = np.sum(indicator_mask[mask] == -1)
         return total_count, positive_count, negative_count
 
-        
-
     def export_compare_data(self, 
-                            out_df: pd.DataFrame = None,
+                            out_dir: str = None,
                             ):
-        pass
+        '''Exports the comparison DataFrame to a CSV file.
+        Params:
+            out_dir: (str) Directory path to save the CSV file.
+        Returns:
+            None
+        '''
+        assert self.comparison_df is not None, "Run compare engine before exporting compare data."
+        self.comparison_df.to_csv(out_dir, index=False)
 
     def rgb_indicator_mask(self,
                            mask: np.ndarray):
+        '''Generates an RGB image representation array of the indicator mask.
+        Params:
+            mask: (numpy.ndarray) Mask array with positive and negative indicators.
+        Returns:
+            rgb: (numpy.ndarray) RGB image array where positive indicators are green, negative are red, and others are black.
+        '''
         rgb = np.zeros((*mask.shape, 3), dtype=np.uint8)
         rgb[mask == -1] = [255, 0, 0]
         rgb[mask == 1] = [0, 255, 0]
         return rgb
-
 
 if __name__ == '__main__':
     """contours = test_import_markers(
