@@ -1,14 +1,14 @@
-import os 
-import sys
+import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 import json
 import fastparquet
 import tqdm
 from cv2 import drawContours, pointPolygonTest
 
+
+# Manager Class for S.T. origin, annotation, meta, markers, and contours data. 
 class DataManager:
     def __init__(self,
                  origin_csv_fname: str = None,
