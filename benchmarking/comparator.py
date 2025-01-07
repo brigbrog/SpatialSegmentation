@@ -116,7 +116,7 @@ class Indicator:
 
     def get_gene_set(self,
                       id: int = None):
-        '''Filtres annotated dataframe for specified cluster id and returns genes as a set.
+        '''Filters annotated dataframe for specified cluster id and returns genes as a set.
         Params:
             id: (int) Cluster index for desired gene set. 
         Returns:
