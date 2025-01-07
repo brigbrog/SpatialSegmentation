@@ -4,7 +4,7 @@ Fall Semester 2024
 
 Visualizing Protein Distribution in the Brain: Reasearch Assistantship
 
-Supervisors: Dr. Jan Mulder, Emma Gerrits
+Supervisors: Dr. Jan Mulder, Dr. Emma Gerrits
 
 Karolinksa Institutet
 
