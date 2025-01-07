@@ -1,17 +1,11 @@
 import numpy as np
 import pandas as pd
 import cv2 
-from scipy.ndimage import gaussian_filter
 import tifffile as tiff
 from tqdm import tqdm
 import os
 import json
-import fastparquet
 
-#fix preprocess thing DONE
-#add edge contour filter 
-#omit the job splitter thing DONE
-#really should also have a max area DONE
 """
 Author: Brian Brogan
 Karolinska Intitutet
@@ -54,8 +48,6 @@ class ControlSegmenter():
         self.var_ranges_values = list(self.var_ranges.values())
         self.controls = controls
         self.preproc_defaults = preproc_defaults
-        #self.preproc = None
-        #self.preproc = self.preprocess(self.preproc_defaults[0], self.preproc_defaults[1], self.preproc_defaults[2])
         self.var_seg_fulldf = self.variable_segmentation_fulldf()
 
     def import_tiff(self, xrange, yrange):
@@ -78,15 +70,6 @@ class ControlSegmenter():
         Returns:
             opened_img: The single-channel preprocessed image array.'''
         
-        #assert self.image_fname is not None, "Image filepath must be specified to run analysis."
-        #img = cv2.imread(self.image_fname, cv2.IMREAD_UNCHANGED)
-        #self.test_img = self.import_tiff((9000, 10000), (6000, 7000))
-        #if self.test_image is None:
-            #raise ValueError("Could not read the image file: {}".format(self.image_fname))
-        #if len(img.shape) > 2 and self.channel_id < img.shape[2]:
-            #img = img[:, :, self.channel_id]
-        #else:
-            #raise IndexError("Channel ID is out of bounds for the image dimensions.")
         print("Collected Image from ", self.image_fname, " with shape ", self.test_image.shape, flush=True)
         assert threshline < np.max(self.test_image), "Threshold above bounds of image intensity range."
         blur = cv2.GaussianBlur(self.test_image,
@@ -151,44 +134,19 @@ class ControlSegmenter():
             new_params = params.copy()
             new_params[test_id] = element
             print(new_params)
-            #markers, contour_arr = self.watershed(new_params)
             self.preproc = None
-            #self.preproc = self.preprocess(self.preproc_defaults[0], self.preproc_defaults[1], self.preproc_defaults[2])
             markers, contour_arr = self.watershed(new_params)
             results = {'test_paramID': self.var_ranges_keys[test_id] + str(i)}
-            #results['num_cells'] = len(contour_arr)
             results['num_cells'] = np.unique(markers).shape[0]-1
             results.update({name: new_params[j] for j, name in enumerate(self.var_ranges_keys)})
-            results['markers'] = markers.tolist() # keep as list for json
+            results['markers'] = markers.tolist()
             results['contours'] = contour_arr
             round.loc[len(round)] = results
             results = None
         return round
     
     def watershed(self, param_list):
-        dtp,dks,minca,maxca = param_list
-        self.preproc = self.preprocess(self.preproc_defaults[0], self.preproc_defaults[1], (dks, dks))
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dks,dks))
-        sure_bg = cv2.dilate(self.preproc, kernel, iterations=3) # this needs to iterate more than once
-        dist = cv2.distanceTransform(self.preproc, cv2.DIST_L2, 5)
-        ret, sure_fg = cv2.threshold(dist, dtp * dist.max(), 255, cv2.THRESH_BINARY)
-        sure_fg = sure_fg.astype(np.uint8)
-        unknown = cv2.subtract(sure_bg, sure_fg)
-        #smoothed_dt = gaussian_filter(dist, sigma=1)
-        #threshold = np.percentile(smoothed_dt, dtp)
-        #local_maxima = (smoothed_dt > threshold).astype(np.uint8)
-        ret, markers = cv2.connectedComponents(sure_fg)
-        markers += 1
-        markers[unknown == 255] = 0
-        markers = cv2.watershed(cv2.cvtColor(self.preproc, cv2.COLOR_GRAY2BGR), np.int32(markers))
-        markers, filtered_contours = self.sift_cells(markers, minca, maxca)
-        print(f'{len(np.unique(markers))-1} CELLS FOUND', flush=True)
-        return markers, filtered_contours
-
-
-
-    def old_watershed(self, param_list):
-        '''Verbosely performs a single watershed segmentation based on super.preproc using parameters in param_list.
+        '''Performs a single watershed segmentation based on super.preproc using parameters in param_list.
         Params:
             param_list: (list) Contains the three test parameters in the following order: dtp, dks, minca, maxca.
         Returns: 
@@ -196,39 +154,19 @@ class ControlSegmenter():
             filtered_contours: (list) Sifted contour array calculated by self.findsift_contours.'''
         
         dtp,dks,minca,maxca = param_list
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
-        steps = [
-            ("dilating", lambda: cv2.dilate(self.preproc, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dks, dks)), iterations=1)),
-            ("distance transform", lambda: cv2.distanceTransform(self.preproc, cv2.DIST_L2, 5)),
-            ("gaussian filter", lambda: gaussian_filter(dist, sigma=1)),
-            ("percentile threshold", lambda: np.percentile(smoothed_dt, dtp)),
-            ("connected components", lambda: cv2.connectedComponents(local_maxima)),
-            ("watershed", lambda: cv2.watershed(cv2.cvtColor(self.preproc, cv2.COLOR_GRAY2BGR), np.int32(markers))),
-        ]
-        for step, operation in steps:
-            result = operation()
-            if step == 'dilating':
-                sure_bg = cv2.dilate(self.preproc, kernel, iterations=3)
-            if step == "distance transform":
-                dist = result
-                _, sure_fg = cv2.threshold(dist, 0.3 * dist.max(), 255, cv2.THRESH_BINARY)
-                sure_fg = sure_fg.astype(np.uint8)
-                unknown = cv2.subtract(sure_bg, sure_fg)
-            elif step == "gaussian filter":
-                smoothed_dt = result
-            elif step == "percentile threshold":
-                threshold = result
-                local_maxima = (smoothed_dt > threshold).astype(np.uint8)
-            elif step == "connected components":
-                _, markers = result
-                markers += 1
-                markers[unknown == 255] = 0
-            elif step == "watershed":
-                markers = result
-
-        print("Sifting contours...", flush=True)
-        filtered_contours = self.sift_cells(markers, minca, maxca)
-        print(f'{len(filtered_contours)} CELLS FOUND', flush=True)
+        self.preproc = self.preprocess(self.preproc_defaults[0], self.preproc_defaults[1], (dks, dks))
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dks,dks))
+        sure_bg = cv2.dilate(self.preproc, kernel, iterations=3)
+        dist = cv2.distanceTransform(self.preproc, cv2.DIST_L2, 5)
+        ret, sure_fg = cv2.threshold(dist, dtp * dist.max(), 255, cv2.THRESH_BINARY)
+        sure_fg = sure_fg.astype(np.uint8)
+        unknown = cv2.subtract(sure_bg, sure_fg)
+        ret, markers = cv2.connectedComponents(sure_fg)
+        markers += 1
+        markers[unknown == 255] = 0
+        markers = cv2.watershed(cv2.cvtColor(self.preproc, cv2.COLOR_GRAY2BGR), np.int32(markers))
+        markers, filtered_contours = self.sift_cells(markers, minca, maxca)
+        print(f'{len(np.unique(markers))-1} CELLS FOUND', flush=True)
         return markers, filtered_contours
 
     def sift_cells(self, markers, minca, maxca):
@@ -242,8 +180,6 @@ class ControlSegmenter():
         
         all_contours = []
         unique_labels = np.unique(markers)
-        #unique_labels = unique_labels[unique_labels != 0]
-
         with tqdm(total=len(unique_labels), desc='Sifting') as pbar:
             for i, label in enumerate(unique_labels, 1):
                 target = (markers == label).astype(np.uint8) * 255
@@ -254,9 +190,6 @@ class ControlSegmenter():
                         filtered_contours.append(cnt.tolist())
                     else:
                         markers[markers==label] = -1
-
-                #filtered_contours = [cnt.tolist() for cnt in contours if maxca >= cv2.contourArea(cnt) >= minca]
-
                 all_contours.extend(filtered_contours)
                 pbar.set_postfix_str(f"{i}/{len(unique_labels)}")
                 pbar.update(1)
@@ -285,18 +218,16 @@ class ControlSegmenter():
             json_path = os.path.join(out_dir, f"{col}.json")
             json_data = None
             if col == "markers":
+                print("Exporting markers...", flush=True)
                 json_data = [arr for arr in segmentation[col]]
             elif col == "contours":
+                print("Exporting contours...", flush=True)
                 json_data = segmentation[col].tolist()  
             assert json_data is not None, \
             "Ensure that markers and contours are properly created before attempting to report."
             with open(json_path, 'w') as f:
                 json.dump(json_data, f)
         print("Done.", flush=True)
-
-    
-
-
 
 if __name__ == "__main__": 
 
