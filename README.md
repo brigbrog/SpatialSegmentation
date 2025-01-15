@@ -8,7 +8,7 @@ Supervisors: Dr. Jan Mulder, Dr. Emma Gerrits
 
 Karolinksa Institutet
 
-Developing a method to segment and benchmark segmentation for nueron cells in spatial transcriptomic image data.
+Developing a method to segment and benchmark segmentation for neuron cells in spatial transcriptomic image data.
 
 This project involves a 4 step process:
 
